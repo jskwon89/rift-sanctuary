@@ -1475,8 +1475,8 @@ export default function App() {
     page: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "#0B0E17", color: "#E2E8F0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" },
     hdr: { padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8", flexShrink: 0 },
     main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 10px", position: "relative", minHeight: 0, overflow: "hidden" },
-    logBox: { flex: 1, overflowY: "auto", padding: "6px 0", minHeight: 0, WebkitOverflowScrolling: "touch" },
-    pnl: { flexShrink: 0, padding: "8px 0 12px", borderTop: "1px solid rgba(255,255,255,0.06)", maxHeight: "40vh", overflowY: "auto", WebkitOverflowScrolling: "touch" },
+    logBox: { flex: 1, overflowY: "auto", padding: "6px 0", minHeight: 0, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" },
+    pnl: { flexShrink: 0, padding: "8px 0 12px", borderTop: "1px solid rgba(255,255,255,0.06)", maxHeight: "40vh", overflowY: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" },
     btn: c => ({ display: "block", width: "100%", padding: "9px 14px", background: `${c}18`, border: `1px solid ${c}44`, borderRadius: 8, color: "#E2E8F0", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", marginBottom: 3 }),
     btnSm: c => ({ display: "block", width: "100%", padding: "6px 10px", background: `${c}12`, border: `1px solid ${c}33`, borderRadius: 6, color: "#E2E8F0", fontSize: 11, cursor: "pointer", textAlign: "left", marginBottom: 2 }),
     tBtn: s => ({ padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, background: s ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.05)", border: s ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0" }),
@@ -1485,7 +1485,7 @@ export default function App() {
 
   return (
     <div style={S.page}>
-      <style>{`html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}`}</style>
+      <style>{`html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}.hide-scroll{scrollbar-width:none;-ms-overflow-style:none}.hide-scroll::-webkit-scrollbar{display:none}`}</style>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
       {phase !== "setup" && phase !== "rules" && <div style={S.hdr}><span>R{round} {human?.faction === "guardian" ? "🛡️" : "🌑"}{!humanAlive ? " 💀" : ""}</span><span style={{ fontWeight: 700, letterSpacing: 1 }}>성역의 균열</span><span style={{ display: "flex", alignItems: "center", gap: 8 }}><button onClick={() => setShowHelp(h => !h)} style={{ background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#94A3B8", fontSize: 11, padding: "2px 8px", cursor: "pointer" }}>📖 규칙</button>{gameMode === "free" ? "🎮" : (pendingModel === "opus" ? "🧠" : "⚡")} 생존{alive.length}</span></div>}
       <div style={S.main}>
@@ -1570,7 +1570,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 12 }}>{[5, 8].map(n => <button key={n} onClick={() => { setPendingN(n); setPhase("rules"); }} style={{ padding: "14px 28px", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,255,0.3)", borderRadius: 8, color: "#E2E8F0", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>{n}인</button>)}</div>
         </div>}
 
-        {phase === "rules" && <div style={{ flex: 1, overflowY: "auto", padding: "16px 4px", WebkitOverflowScrolling: "touch", minHeight: 0 }}>
+        {phase === "rules" && <div className="hide-scroll" style={{ flex: 1, overflowY: "auto", padding: "16px 4px", WebkitOverflowScrolling: "touch", minHeight: 0 }}>
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <h2 style={{ fontSize: 22, fontWeight: 900, margin: "0 0 4px", color: "#E2E8F0" }}>게임 규칙</h2>
             <p style={{ color: "#64748B", fontSize: 12, margin: 0 }}>{pendingN}인 모드 · 수호자 {pendingN === 5 ? 4 : 6} / 공허 {pendingN === 5 ? 1 : 2}</p>
