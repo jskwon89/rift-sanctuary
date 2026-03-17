@@ -426,6 +426,97 @@ function localBotReact(bot, players, playerMsg, allChoices, round, convSoFar) {
   return null;
 }
 
+// 질문 응답 시스템
+function localBotAnswer(bot, players, question, targetId, allChoices, round) {
+  const p = bot.p;
+  const myChoice = allChoices.find(c => c.pid === p.id);
+  if (!myChoice) return "이번에는 행동을 안 했다.";
+  const realCard = CARDS.find(c => c.id === myChoice.cid);
+  const realTgt = myChoice.tgt?.map(t => pn(players, t)).join(", ") || "없음";
+  const mySecrets = bot.secrets.filter(s => s.round === round);
+  const resultSecret = mySecrets.find(s => s.result && s.result !== "disrupted" && s.result !== "stolen" && s.result !== "unknown");
+
+  if (p.faction === "guardian") {
+    // 수호자: 진실만 말함
+    switch (question) {
+      case "card":
+        return `${realCard.emoji} ${realCard.name}을 썼다.`;
+      case "target":
+        if (realCard.target === "self") return "자기 자신에게 썼다.";
+        if (realCard.target === "none") return "대상이 필요 없는 카드다.";
+        return `${realTgt}에게 썼다.`;
+      case "result": {
+        const disrupted = mySecrets.find(s => s.result === "disrupted");
+        if (disrupted) return "교란당해서 결과를 못 받았다.";
+        const stolen = mySecrets.find(s => s.result === "stolen");
+        if (stolen) return "심연의 손길에 결과를 빼앗겼다.";
+        if (resultSecret) {
+          const desc = _describeSecret(resultSecret, players);
+          return desc || "결과를 공유하기 어렵다.";
+        }
+        if (realCard.cat === "combat") return "전투 카드라서 조사 결과는 없다.";
+        return "특별한 결과는 없었다.";
+      }
+      default: return "뭘 물어보는 건지 모르겠다.";
+    }
+  } else {
+    // 공허: 거짓말 — 전투 카드를 정보 카드로 위장
+    const fakeInfoCards = [
+      { id: "prophecy_shard", name: "예지의 파편", emoji: "🔮" },
+      { id: "sentinel_eye", name: "파수꾼의 눈", emoji: "👁️" },
+      { id: "tracker_eye", name: "추적자의 눈", emoji: "🔍" },
+      { id: "vigilant_eye", name: "경계의 눈", emoji: "⚠️" },
+    ];
+    const nonTeam = players.filter(x => x.alive && x.id !== p.id && !bot.vt.includes(x.id));
+
+    switch (question) {
+      case "card": {
+        if (realCard.cat === "combat") {
+          // 전투카드 → 가짜 정보 카드 주장
+          const fake = pick(fakeInfoCards);
+          bot._fakeClaim = fake; // 일관성 위해 저장
+          return `${fake.emoji} ${fake.name}을 썼다.`;
+        }
+        // 정보 카드면 진짜 말해도 됨
+        return `${realCard.emoji} ${realCard.name}을 썼다.`;
+      }
+      case "target": {
+        if (realCard.cat === "combat" || realCard.target === "self") {
+          // 가짜 대상 (수호자를 대상으로)
+          if (nonTeam.length >= 2) return `${sample(nonTeam, 2).map(t => t.name).join(", ")}에게 썼다.`;
+          if (nonTeam.length) return `${nonTeam[0].name}에게 썼다.`;
+          return `${pick(players.filter(x => x.alive && x.id !== p.id)).name}에게 썼다.`;
+        }
+        return `${realTgt}에게 썼다.`;
+      }
+      case "result": {
+        if (realCard.cat === "combat") {
+          // 가짜 결과 만들기
+          const fake = bot._fakeClaim || pick(fakeInfoCards);
+          if (fake.id === "prophecy_shard") {
+            return nonTeam.length >= 2
+              ? `${sample(nonTeam, 2).map(t => t.name).join(", ")} 중에 공허가 없었다.`
+              : "공허가 없었다.";
+          }
+          if (fake.id === "sentinel_eye") return "같은 진영이었다.";
+          if (fake.id === "tracker_eye") {
+            const fakeCard = pick(["prophecy_shard", "sentinel_eye", "vigilant_eye"]);
+            return nonTeam.length ? `${pick(nonTeam).name}이 ${cn(fakeCard)}을 썼다.` : "정보 카드를 쓰고 있었다.";
+          }
+          return "지목당하지 않았다.";
+        }
+        // 실제 정보 카드 결과 — 유리하면 진짜, 불리하면 거짓
+        if (resultSecret) {
+          const desc = _describeSecret(resultSecret, players);
+          if (desc) return desc;
+        }
+        return "특별한 결과는 없었다.";
+      }
+      default: return "뭘 물어보는 건지 모르겠다.";
+    }
+  }
+}
+
 // 로컬 투표 (토론 반영 강화)
 function localBotVote(bot, players, convLog) {
   if (convLog) {
@@ -1330,11 +1421,45 @@ export default function App() {
 
   const myDecl = async (type, tid, claim) => {
     const tp = players.find(p => p.id === tid);
-    let msg = type === "faction" ? `${tp?.name}은(는) ${claim === "void" ? "공허" : "수호자"}다` : type === "suspect" ? `${tp?.name}이(가) 수상하다` : type === "trust" ? `${tp?.name}을(를) 믿는다` : claim;
+    let msg;
+    switch (type) {
+      case "faction": msg = `${tp?.name}은(는) ${claim === "void" ? "공허" : "수호자"}다`; break;
+      case "suspect": msg = `${tp?.name}이(가) 수상하다`; break;
+      case "trust": msg = `${tp?.name}을(를) 믿는다`; break;
+      case "ask_card": msg = `${tp?.name}, 어떤 카드 썼어?`; break;
+      case "ask_target": msg = `${tp?.name}, 누구한테 썼어?`; break;
+      case "ask_result": msg = `${tp?.name}, 결과가 뭐였어?`; break;
+      default: msg = claim; break;
+    }
+
     addL(`🗣️ 당신: "${msg}"`);
     setDc(p => p + 1);
     const currentConv = convLog + `P1: "${msg}"\n`;
     setLoading(true);
+
+    // 질문인 경우: 해당 봇이 직접 답변
+    if (type.startsWith("ask_") && gameMode === "free") {
+      const bot = bots[tid];
+      if (bot) {
+        const qType = type.replace("ask_", "");
+        const answer = localBotAnswer(bot, players, qType, tid, allChoicesRef, round);
+        addL(`  💬 ${tp.name}: "${answer}"`);
+        const newConv = currentConv + `${tp.name}: "${answer}"\n`;
+        setConvLog(newConv);
+
+        // 다른 봇들도 반응할 수 있음 (답변 내용에 대해)
+        const rx = generateLocalReactions(players, bots, answer, allChoicesRef, round, newConv);
+        let finalConv = newConv;
+        rx.filter(r => r.id !== tid).forEach(r => {
+          const sp = players.find(p => p.id === r.id);
+          if (sp?.alive) { addL(`  💬 ${sp.name}: "${r.msg}"`); finalConv += `${sp.name}: "${r.msg}"\n`; }
+        });
+        setConvLog(finalConv);
+      }
+      setLoading(false);
+      return;
+    }
+
     try {
       const rx = gameMode === "free"
         ? generateLocalReactions(players, bots, msg, allChoicesRef, round, currentConv)
@@ -1667,6 +1792,13 @@ export default function App() {
           <div style={{ fontSize: 12, color: "#F59E0B", marginBottom: 4, textAlign: "center" }}>☀️ 토론 ({dc}/3)</div>
           {recentSecrets.length > 0 && dc < 3 && <div><div style={S.sub}>📋 조사 결과 공유</div>
             {recentSecrets.map((s, i) => <button key={`s${i}`} onClick={() => myDecl("info_share", s.targets?.[0] || s.target || HID, s.msg)} style={S.btnSm("#8B5CF6")}>R{s.round}: {s.msg}</button>)}</div>}
+          {dc < 3 && <div><div style={S.sub}>❓ 질문하기</div>
+            {aliveOth.map(p => <div key={`q${p.id}`} style={{ display: "flex", gap: 3, marginBottom: 3 }}>
+              <span style={{ fontSize: 11, color: "#94A3B8", minWidth: 28, display: "flex", alignItems: "center" }}>{p.name}</span>
+              <button onClick={() => myDecl("ask_card", p.id)} style={{ ...S.btnSm("#3B82F6"), flex: 1, textAlign: "center" }}>🃏 카드?</button>
+              <button onClick={() => myDecl("ask_target", p.id)} style={{ ...S.btnSm("#3B82F6"), flex: 1, textAlign: "center" }}>🎯 대상?</button>
+              <button onClick={() => myDecl("ask_result", p.id)} style={{ ...S.btnSm("#3B82F6"), flex: 1, textAlign: "center" }}>📊 결과?</button>
+            </div>)}</div>}
           {dc < 3 && <div><div style={S.sub}>🎯 발언</div>
             {aliveOth.map(p => <div key={p.id} style={{ display: "flex", gap: 3, marginBottom: 3 }}>
               <button onClick={() => myDecl("suspect", p.id)} style={{ ...S.btnSm("#EF4444"), flex: 1, textAlign: "center" }}>🔴 {p.name} 의심</button>
