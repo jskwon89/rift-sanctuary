@@ -508,33 +508,50 @@ class Bot {
     return { al, oth, nv, ng, confirmed_void, confirmed_guard, unknown, suspects, topSusp, infoHeavy };
   }
 
-  // ── 투표 (토론 내용 반영) ──
+  // ── 투표 (토론 + 추론 기반) ──
   vote(ps) {
-    const { oth, confirmed_void, topSusp } = this._ctx(ps);
+    const { oth, confirmed_void, topSusp, infoHeavy } = this._ctx(ps);
     if (!oth.length) return this.p.id;
 
     if (this.p.faction === "guardian") {
       // 1순위: 확정 공허
       if (confirmed_void.length) return pick(confirmed_void).id;
-      // 2순위: 의심도 높은 사람 (가중 랜덤)
+
+      // 2순위: 의심도 높은 사람 (가중 랜덤 — 더 집중적)
       if (topSusp.length) {
-        const weights = topSusp.map(p => this.gs(p.id));
+        // 의심도 제곱으로 가중 → 높은 의심자에게 표 집중
+        const weights = topSusp.map(p => Math.pow(this.gs(p.id), 1.5));
         const total = weights.reduce((a, b) => a + b, 0);
         let r = Math.random() * total;
         for (let i = 0; i < topSusp.length; i++) { r -= weights[i]; if (r <= 0) return topSusp[i].id; }
         return topSusp[0].id;
       }
-      // 3순위: 모르는 사람 중 랜덤
+
+      // 3순위: 전투 카드 비중 높은 사람 (정보 안 쓰는 사람이 공허일 확률 높음)
+      const combatHeavy = oth.filter(p => {
+        const hist = p.actionHistory || [];
+        if (hist.length === 0) return false;
+        return hist.filter(h => h.cat === "combat").length > hist.filter(h => h.cat === "info").length;
+      });
+      if (combatHeavy.length) return pick(combatHeavy).id;
+
+      // 4순위: 모르는 사람 중 랜덤
       const unk = oth.filter(p => this.kf[p.id] === undefined);
       return pick(unk.length ? unk : oth).id;
     }
 
-    // 공허: 팀원 절대 보호
+    // 공허: 팀원 절대 보호 + 전략적 추방
     const nonTeam = oth.filter(p => !this.vt.includes(p.id));
     if (!nonTeam.length) return pick(oth).id;
-    // 정보 많이 모은 수호자 우선 제거, 또는 나/팀원을 의심하는 사람
+
+    // 1순위: 정보 많이 모은 수호자 (가장 위험)
     const dangerous = nonTeam.filter(p => (p.actionHistory?.filter(h => h.cat === "info").length || 0) >= 2);
     if (dangerous.length) return pick(dangerous).id;
+
+    // 2순위: 나/팀원 의심하는 사람 (susp가 마이너스 = 나를 수호자로 보는 사람 → 살려둠)
+    const threatToMe = nonTeam.filter(p => this.gs(p.id) < -0.1); // 나를 의심하는 = 나에 대해 정보 있는
+    if (threatToMe.length && Math.random() < 0.4) return pick(threatToMe).id;
+
     return pick(nonTeam).id;
   }
 
@@ -593,77 +610,84 @@ class Bot {
     return this._smartInfo(ctx, av, round);
   }
 
-  // ── 공허 전략 ──
+  // ── 공허 전략 (Opus 분석 기반 v2) ──
   _va(ctx, av, round) {
     const { oth, al, nv, ng, infoHeavy } = ctx;
     const nonTeam = oth.filter(p => !this.vt.includes(p.id));
     const guards = nonTeam.length ? nonTeam : oth;
 
+    // 정보통 수호자 식별 (2회 이상 정보 카드 사용)
+    const infoHunters = guards.filter(p => (p.actionHistory?.filter(h => h.cat === "info").length || 0) >= 2);
+    // 가장 위험한 수호자 (정보 + 나/팀원 의심)
+    const priorityTarget = infoHunters.length ? infoHunters[0] : (guards.length ? guards[0] : null);
+
     // ★ 마무리 조건: 공허 수 >= 수호자 수 - 1 → 적극 킬
     if (nv >= ng - 1 && av.find(c => c.id === "abyssal_blade") && guards.length) {
-      return { c: "abyssal_blade", t: [pick(guards).id] };
+      return { c: "abyssal_blade", t: [priorityTarget?.id || pick(guards).id] };
     }
 
     // 라운드별 전략
     if (round === 1) {
-      // R1: 정보 수집 (수호자처럼 행동) 또는 안개/교란으로 방해
+      // R1: 정보 차단이 핵심 — 교란/안개/손길 비중 대폭 UP
       const r = Math.random();
-      if (r < 0.40) return this._smartInfo(ctx, av, round); // 수호자처럼 행동
-      if (r < 0.60 && av.find(c => c.id === "fog_veil")) return { c: "fog_veil", t: [this.p.id] };
-      if (r < 0.75 && av.find(c => c.id === "disruption") && guards.length) {
-        // 정보 수집하려는 수호자 방해
+      if (r < 0.30 && av.find(c => c.id === "disruption") && guards.length) {
+        // 정보 수집하려는 수호자 방해 (최우선)
         return { c: "disruption", t: [pick(guards).id] };
       }
-      if (av.find(c => c.id === "abyssal_touch") && guards.length) {
-        // 정보 강탈
-        const target = infoHeavy.find(p => !this.vt.includes(p.id)) || guards[0];
-        return { c: "abyssal_touch", t: [target.id] };
+      if (r < 0.50 && av.find(c => c.id === "abyssal_touch") && guards.length) {
+        return { c: "abyssal_touch", t: [pick(guards).id] };
       }
+      if (r < 0.65 && av.find(c => c.id === "fog_veil")) {
+        return { c: "fog_veil", t: [this.p.id] };
+      }
+      // 나머지: 위장용 정보 수집
       return this._smartInfo(ctx, av, round);
     }
 
-    // 중반 이후
+    // R2 이후: 상황에 따라 킬/차단/위장 분기
+    // 의심받는 정도 파악
+    const amSuspected = oth.some(p => this.p.actionHistory?.filter(h => h.cat === "combat").length >= 2);
+
     const r = Math.random();
 
-    // 킬 (확률 조절: 의심 안 받는 상황에서)
+    // 킬: 정보통 수호자 우선 (30%)
     if (r < 0.30 && av.find(c => c.id === "abyssal_blade") && guards.length) {
-      // 정보 많이 모은 수호자 우선 타겟
-      const dangerous = guards.filter(p => (p.actionHistory?.filter(h => h.cat === "info").length || 0) >= 2);
-      const target = dangerous.length ? pick(dangerous) : pick(guards);
+      const target = priorityTarget || pick(guards);
       return { c: "abyssal_blade", t: [target.id] };
     }
 
-    // 안개: 조사 당할 것 같으면 (의심받는 상태)
-    if (r < 0.42 && av.find(c => c.id === "fog_veil")) {
-      // 의심 많이 받을수록 안개 확률 UP
-      const myExposure = oth.filter(p => (p.actionHistory?.filter(h => h.cat === "info").length || 0) > 0).length;
-      if (myExposure >= 2 || round >= 3) return { c: "fog_veil", t: [this.p.id] };
+    // 정보 차단 (교란+손길): 수호자 정보 수집 방해 (25%)
+    if (r < 0.55) {
+      if (av.find(c => c.id === "abyssal_touch") && guards.length && Math.random() < 0.5) {
+        const target = infoHeavy.find(p => !this.vt.includes(p.id)) || guards[0];
+        return { c: "abyssal_touch", t: [target.id] };
+      }
+      if (av.find(c => c.id === "disruption") && guards.length) {
+        const target = infoHeavy.find(p => !this.vt.includes(p.id)) || guards[0];
+        return { c: "disruption", t: [target.id] };
+      }
     }
 
-    // 정보 강탈: 정보 많은 수호자에게
-    if (r < 0.55 && av.find(c => c.id === "abyssal_touch") && guards.length) {
-      const target = infoHeavy.find(p => !this.vt.includes(p.id)) || guards[0];
-      return { c: "abyssal_touch", t: [target.id] };
+    // 안개: 의심받을수록 확률 UP
+    if (r < 0.65 && av.find(c => c.id === "fog_veil")) {
+      if (amSuspected || round >= 3) return { c: "fog_veil", t: [this.p.id] };
     }
 
-    // 교란: 정보 수집하는 수호자 방해
-    if (r < 0.68 && av.find(c => c.id === "disruption") && guards.length) {
-      const target = infoHeavy.find(p => !this.vt.includes(p.id)) || guards[0];
-      return { c: "disruption", t: [target.id] };
-    }
-
-    // 사슬: 다음 라운드 킬 방지 (수호자의 보복 차단)
-    if (r < 0.78 && av.find(c => c.id === "specter_chain") && guards.length) {
-      return { c: "specter_chain", t: [pick(guards).id] };
+    // 사슬: 킬 가능성 있는 수호자 봉쇄
+    if (r < 0.75 && av.find(c => c.id === "specter_chain") && guards.length) {
+      // 전투카드 많이 쓴 수호자 사슬
+      const combatUsers = guards.filter(p => (p.actionHistory?.filter(h => h.cat === "combat").length || 0) >= 1);
+      const target = combatUsers.length ? pick(combatUsers) : pick(guards);
+      return { c: "specter_chain", t: [target.id] };
     }
 
     // 방패: 팀원 보호 (팀원이 의심받는 경우)
     if (av.find(c => c.id === "ward_shield")) {
-      const suspTeam = al.filter(p => this.vt.includes(p.id) && p.alive);
-      if (suspTeam.length && Math.random() < 0.3) return { c: "ward_shield", t: [pick(suspTeam).id] };
+      const suspTeam = al.filter(p => this.vt.includes(p.id) && p.alive && p.id !== this.p.id);
+      if (suspTeam.length && Math.random() < 0.35) return { c: "ward_shield", t: [pick(suspTeam).id] };
     }
 
-    // 기본: 정보 수집 (위장)
+    // 기본: 정보 수집 (위장 — 수호자처럼 보이기)
     return this._smartInfo(ctx, av, round);
   }
 
