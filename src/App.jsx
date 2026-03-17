@@ -230,19 +230,23 @@ function _guardianSpeak(bot, players, myChoice, round, publicLog, convSoFar) {
     }
   }
 
-  // 4. 모순 지적 (이전 대화)
+  // 4. 모순 지적 (같은 라운드의 추적자 결과로만)
   if (convSoFar) {
     const knownCards = {};
-    bot.secrets.filter(s => s.card === "tracker_eye" && typeof s.result === "string").forEach(s => {
+    // 이번 라운드의 추적자 결과만 사용
+    bot.secrets.filter(s => s.card === "tracker_eye" && typeof s.result === "string" && s.round === round).forEach(s => {
       knownCards[s.target] = s.result;
     });
     for (const [tid, realCard] of Object.entries(knownCards)) {
       const tName = pn(players, +tid);
       const realCardObj = CARDS.find(c => c.id === realCard);
+      // 실제로 전투 카드 썼는데 이번 대화에서 정보 카드 주장하는 경우
       if (realCardObj?.cat === "combat") {
-        const claimedInfo = convSoFar.match(new RegExp(`${tName}.*?(예지|파수꾼|추적자|미행|경계)`));
+        // 이번 대화에서 해당 인물이 정보 카드를 주장했는지 확인
+        const pattern = new RegExp(`${tName}:.*?(예지의 파편|파수꾼의 눈|추적자의 눈|미행의 눈|경계의 눈)`);
+        const claimedInfo = convSoFar.match(pattern);
         if (claimedInfo) {
-          parts.push(`잠깐, ${tName}이 정보 카드를 썼다고? 내 추적자의 눈으로 보니 ${cn(realCard)}을 썼다. 거짓말이다!`);
+          parts.push(`잠깐, ${tName}이 ${claimedInfo[1]}을 썼다고? 내 추적자의 눈으로 보니 ${cn(realCard)}을 썼다. 거짓말이다!`);
           break;
         }
       }
@@ -295,29 +299,61 @@ function _voidSpeak(bot, players, myChoice, round, publicLog, convSoFar, brain) 
 
   // 가짜 정보 주장 (전투카드 썼으면 필수, 아니면 50%)
   if (usedCombat || roll < 0.70) {
-    const fc = pick(["prophecy_shard", "sentinel_eye", "tracker_eye"]);
+    // 드래프트 중복 방지: 이미 다른 봇이 주장한 카드 제외
+    const allClaimed = new Set();
+    if (convSoFar) {
+      if (convSoFar.includes("예지의 파편")) allClaimed.add("prophecy_shard");
+      if (convSoFar.includes("파수꾼의 눈")) allClaimed.add("sentinel_eye");
+      if (convSoFar.includes("추적자의 눈")) allClaimed.add("tracker_eye");
+      if (convSoFar.includes("경계의 눈")) allClaimed.add("vigilant_eye");
+      if (convSoFar.includes("미행의 눈")) allClaimed.add("shadow_eye");
+    }
+    const available = ["prophecy_shard", "sentinel_eye", "tracker_eye"].filter(c => !allClaimed.has(c));
+    const fc = available.length ? pick(available) : pick(["vigilant_eye", "shadow_eye"]);
 
     if (fc === "prophecy_shard" && nonTeam.length >= 2) {
       const targets = sample(nonTeam, 2);
-      return Math.random() < 0.6
-        ? `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 없었다.`
-        : `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 있다!`;
+      const result = Math.random() < 0.6 ? "없었다" : "있다!";
+      bot._fakeClaim = { id: "prophecy_shard", name: "예지의 파편", emoji: "🔮" };
+      bot._fakeTargets = targets.map(t => t.name);
+      bot._fakeResult = result === "없었다" ? "공허가 없었다" : "공허가 있다";
+      return `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 ${result}`;
     }
     if (fc === "sentinel_eye" && nonTeam.length >= 2) {
       const targets = sample(nonTeam, 2);
-      return Math.random() < 0.5
-        ? `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 다른 진영이다. 둘 중 하나는 공허다.`
-        : `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 같은 진영이었다.`;
+      const same = Math.random() < 0.5;
+      bot._fakeClaim = { id: "sentinel_eye", name: "파수꾼의 눈", emoji: "👁️" };
+      bot._fakeTargets = targets.map(t => t.name);
+      bot._fakeResult = same ? "같은 진영이었다" : "다른 진영이다";
+      return same
+        ? `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 같은 진영이었다.`
+        : `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 다른 진영이다.`;
     }
     if (fc === "tracker_eye") {
       const target = pick(nonTeam);
+      bot._fakeClaim = { id: "tracker_eye", name: "추적자의 눈", emoji: "🔍" };
+      bot._fakeTargets = [target.name];
       if (Math.random() < 0.5) {
-        const fakeSeen = pick(["abyssal_blade", "fog_veil", "disruption", "abyssal_touch"]);
-        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(fakeSeen)}을 썼다. 수상하다.`;
+        // R1 잠금 카드 제외
+        let fakeSeen = ["fog_veil", "disruption", "abyssal_touch"];
+        if (round >= 2) fakeSeen.push("abyssal_blade", "specter_chain");
+        const fs = pick(fakeSeen);
+        bot._fakeResult = cn(fs);
+        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(fs)}을 썼다. 수상하다.`;
       } else {
-        const fakeInfo = pick(["prophecy_shard", "sentinel_eye", "vigilant_eye"]);
-        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(fakeInfo)}을 쓰고 있었다.`;
+        const fakeInfo = pick(["prophecy_shard", "sentinel_eye", "vigilant_eye"].filter(c => !allClaimed.has(c) && c !== fc));
+        bot._fakeResult = cn(fakeInfo || "vigilant_eye");
+        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(fakeInfo || "vigilant_eye")}을 쓰고 있었다.`;
       }
+    }
+    // 폴백: 경계/미행
+    if (nonTeam.length) {
+      const target = pick(nonTeam);
+      const fakeCard = fc === "vigilant_eye" ? "경계의 눈" : "미행의 눈";
+      bot._fakeClaim = { id: fc, name: fakeCard, emoji: fc === "vigilant_eye" ? "⚠️" : "👤" };
+      bot._fakeTargets = [target.name];
+      bot._fakeResult = fc === "vigilant_eye" ? "누군가에게 지목당했다" : "지목 없음";
+      return `${fakeCard}으로 ${target.name}을 봤더니 ${bot._fakeResult}.`;
     }
   }
 
@@ -404,27 +440,34 @@ function localBotReact(bot, players, playerMsg, allChoices, round, convSoFar) {
   if (mentioned) {
     const isQuestion = playerMsg.includes("뭘 했") || playerMsg.includes("카드") || playerMsg.includes("누구") || playerMsg.includes("결과") || playerMsg.includes("말해") || playerMsg.includes("?") || playerMsg.includes("대상");
     if (isQuestion) {
-      const answer = localBotAnswer(bot, players, "card", p.id, [], 0);
-      // allChoices가 없으므로 직접 처리
       const myChoice = bot.myChoices[bot.myChoices.length - 1];
       if (myChoice) {
         const card = CARDS.find(c => c.id === myChoice.cid);
         const tgt = myChoice.tgt?.map(t => pn(players, t)).join(", ") || "";
         if (p.faction === "guardian") {
-          if (card.cat === "combat") return `${card.emoji} ${card.name}을 ${tgt}에게 썼다.`;
+          // 수호자: 진실
           const secret = bot.secrets.filter(s => s.round === (bot._round || 1)).find(s => s.result && s.result !== "disrupted" && s.result !== "stolen" && s.result !== "unknown");
           if (secret) {
             const desc = _describeSecret(secret, players);
-            return desc || `${card.emoji} ${card.name}을 썼다.`;
+            return desc || `${card.emoji} ${card.name}을 ${tgt ? tgt + "에게 " : ""}썼다.`;
           }
           return `${card.emoji} ${card.name}을 ${tgt ? tgt + "에게 " : ""}썼다.`;
         } else {
-          // 공허: 거짓말
+          // 공허: 토론에서 한 거짓말과 일관되게
+          if (bot._fakeClaim) {
+            const parts = [`${bot._fakeClaim.name}을 썼다`];
+            if (bot._fakeTargets) parts.push(`${bot._fakeTargets.join(", ")}에게`);
+            if (bot._fakeResult) parts.push(`결과: ${bot._fakeResult}`);
+            return parts.join(". ") + ".";
+          }
           if (card.cat === "combat") {
+            // 아직 거짓말 없으면 새로 만들어 저장
             const fakeCard = pick(["예지의 파편", "파수꾼의 눈", "추적자의 눈"]);
-            const nonTeam = oth.filter(x => !bot.vt.includes(x.id));
-            const fakeTgt = nonTeam.length >= 2 ? sample(nonTeam, 2).map(t => t.name).join(", ") : (nonTeam.length ? nonTeam[0].name : "");
-            return `${fakeCard}을 ${fakeTgt}에게 썼다.`;
+            const nonTeamList = oth.filter(x => !bot.vt.includes(x.id));
+            const fakeTgt = nonTeamList.length >= 2 ? sample(nonTeamList, 2).map(t => t.name) : (nonTeamList.length ? [nonTeamList[0].name] : []);
+            bot._fakeClaim = { id: "unknown", name: fakeCard, emoji: "🔮" };
+            bot._fakeTargets = fakeTgt;
+            return `${fakeCard}을 ${fakeTgt.join(", ")}에게 썼다.`;
           }
           return `${card.emoji} ${card.name}을 ${tgt ? tgt + "에게 " : ""}썼다.`;
         }
@@ -492,52 +535,60 @@ function localBotAnswer(bot, players, question, targetId, allChoices, round) {
       default: return "뭘 물어보는 건지 모르겠다.";
     }
   } else {
-    // 공허: 거짓말 — 전투 카드를 정보 카드로 위장
-    const fakeInfoCards = [
-      { id: "prophecy_shard", name: "예지의 파편", emoji: "🔮" },
-      { id: "sentinel_eye", name: "파수꾼의 눈", emoji: "👁️" },
-      { id: "tracker_eye", name: "추적자의 눈", emoji: "🔍" },
-      { id: "vigilant_eye", name: "경계의 눈", emoji: "⚠️" },
-    ];
+    // 공허: 토론에서 한 거짓말과 일관되게 답변
     const nonTeam = players.filter(x => x.alive && x.id !== p.id && !bot.vt.includes(x.id));
+
+    // 교란당한 경우: 수호자와 동일하게 솔직하게 (거짓말 불필요)
+    const wasDisrupted = mySecrets.find(s => s.result === "disrupted");
+    if (wasDisrupted && question === "result") return "교란당해서 결과를 못 받았다.";
 
     switch (question) {
       case "card": {
+        // 토론에서 이미 가짜 카드를 주장했으면 그대로
+        if (bot._fakeClaim) return `${bot._fakeClaim.emoji} ${bot._fakeClaim.name}을 썼다.`;
         if (realCard.cat === "combat") {
-          // 전투카드 → 가짜 정보 카드 주장
+          // 아직 주장 안 했으면 새로 만들어 저장
+          const fakeInfoCards = [
+            { id: "prophecy_shard", name: "예지의 파편", emoji: "🔮" },
+            { id: "sentinel_eye", name: "파수꾼의 눈", emoji: "👁️" },
+            { id: "tracker_eye", name: "추적자의 눈", emoji: "🔍" },
+          ];
           const fake = pick(fakeInfoCards);
-          bot._fakeClaim = fake; // 일관성 위해 저장
+          bot._fakeClaim = fake;
           return `${fake.emoji} ${fake.name}을 썼다.`;
         }
-        // 정보 카드면 진짜 말해도 됨
         return `${realCard.emoji} ${realCard.name}을 썼다.`;
       }
       case "target": {
+        // 토론에서 가짜 대상을 주장했으면 그대로
+        if (bot._fakeTargets) return `${bot._fakeTargets.join(", ")}에게 썼다.`;
         if (realCard.cat === "combat" || realCard.target === "self") {
-          // 가짜 대상 (수호자를 대상으로)
-          if (nonTeam.length >= 2) return `${sample(nonTeam, 2).map(t => t.name).join(", ")}에게 썼다.`;
-          if (nonTeam.length) return `${nonTeam[0].name}에게 썼다.`;
-          return `${pick(players.filter(x => x.alive && x.id !== p.id)).name}에게 썼다.`;
+          const fakeTgts = nonTeam.length >= 2 ? sample(nonTeam, 2).map(t => t.name) : (nonTeam.length ? [nonTeam[0].name] : [pick(players.filter(x => x.alive && x.id !== p.id)).name]);
+          bot._fakeTargets = fakeTgts;
+          return `${fakeTgts.join(", ")}에게 썼다.`;
         }
         return `${realTgt}에게 썼다.`;
       }
       case "result": {
+        // 토론에서 가짜 결과를 주장했으면 그대로
+        if (bot._fakeResult) return bot._fakeResult;
         if (realCard.cat === "combat") {
-          // 가짜 결과 만들기
-          const fake = bot._fakeClaim || pick(fakeInfoCards);
-          if (fake.id === "prophecy_shard") {
-            return nonTeam.length >= 2
-              ? `${sample(nonTeam, 2).map(t => t.name).join(", ")} 중에 공허가 없었다.`
-              : "공허가 없었다.";
+          const fake = bot._fakeClaim;
+          if (fake?.id === "prophecy_shard") {
+            const r = "공허가 없었다.";
+            bot._fakeResult = r;
+            return r;
           }
-          if (fake.id === "sentinel_eye") return "같은 진영이었다.";
-          if (fake.id === "tracker_eye") {
+          if (fake?.id === "sentinel_eye") { bot._fakeResult = "같은 진영이었다."; return bot._fakeResult; }
+          if (fake?.id === "tracker_eye") {
             const fakeCard = pick(["prophecy_shard", "sentinel_eye", "vigilant_eye"]);
-            return nonTeam.length ? `${pick(nonTeam).name}이 ${cn(fakeCard)}을 썼다.` : "정보 카드를 쓰고 있었다.";
+            const r = nonTeam.length ? `${pick(nonTeam).name}이 ${cn(fakeCard)}을 썼다.` : "정보 카드를 쓰고 있었다.";
+            bot._fakeResult = r;
+            return r;
           }
-          return "지목당하지 않았다.";
+          bot._fakeResult = "특별한 결과는 없었다.";
+          return bot._fakeResult;
         }
-        // 실제 정보 카드 결과 — 유리하면 진짜, 불리하면 거짓
         if (resultSecret) {
           const desc = _describeSecret(resultSecret, players);
           if (desc) return desc;
@@ -605,7 +656,7 @@ function generateLocalBotVotes(players, bots, allChoices, round, convLog) {
 // Bot (행동/투표용)
 // ═══════════════════════════════════════════
 class Bot {
-  constructor(p) { this.p = p; this.kf = {}; this.susp = {}; this.vt = []; this.sk = 0.7; this.secrets = []; this.myChoices = []; this.claimedCards = {}; this.otherClaims = []; }
+  constructor(p) { this.p = p; this.kf = {}; this.susp = {}; this.vt = []; this.sk = 0.7; this.secrets = []; this.myChoices = []; this.claimedCards = {}; this.otherClaims = []; this._fakeClaim = null; this._fakeTargets = null; this._fakeResult = null; }
   initV(ids) { this.vt = ids; ids.forEach(v => { if (v !== this.p.id) this.kf[v] = "void"; }); }
   gs(id) { return this.susp[id] || 0; }
   as(id, v) { this.susp[id] = Math.max(-1, Math.min(2, (this.susp[id] || 0) + v)); }
@@ -1271,6 +1322,8 @@ export default function App() {
   };
 
   const doNightDraft = (ps, bt, rnd) => {
+    // 매 라운드 가짜 주장 초기화
+    Object.values(bt).forEach(b => { b._fakeClaim = null; b._fakeTargets = null; b._fakeResult = null; });
     const order = getDraftOrder(ps, rnd);
     const tk = new Set(), before = [], allDraft = [];
     const orderNames = order.map(p => p.id === HID ? `[${p.name}]` : p.name).join(" → ");
