@@ -100,8 +100,8 @@ function _describeMyAction(myChoice, players) {
     case "abyssal_blade": return null; // 킬은 숨김
     case "ward_shield": return `나는 결계의 방패로 ${tgtNames}을 보호했다.`;
     case "fog_veil": return null; // 안개도 숨김
-    case "disruption": return `나는 교란의 속삭임을 사용했다.`;
-    case "specter_chain": return `나는 망령의 사슬을 사용했다.`;
+    case "disruption": return `나는 교란의 속삭임으로 ${tgtNames}을 교란했다.`;
+    case "specter_chain": return `나는 망령의 사슬로 ${tgtNames}을 묶었다.`;
     case "abyssal_touch": return null; // 손길도 숨김
     default: return null;
   }
@@ -397,6 +397,38 @@ function localBotReact(bot, players, playerMsg, allChoices, round, convSoFar) {
       return p.faction === "guardian"
         ? pick(["고맙다. 같이 공허를 잡자.", "나도 당신을 믿는다. 협력하자."])
         : pick(["고맙다. 같이 공허를 찾자.", "믿어줘서 고맙다. 의심스러운 사람이 있으면 말해달라."]);
+    }
+  }
+
+  // 자기한테 질문한 경우 (이름 + 질문 패턴)
+  if (mentioned) {
+    const isQuestion = playerMsg.includes("뭘 했") || playerMsg.includes("카드") || playerMsg.includes("누구") || playerMsg.includes("결과") || playerMsg.includes("말해") || playerMsg.includes("?") || playerMsg.includes("대상");
+    if (isQuestion) {
+      const answer = localBotAnswer(bot, players, "card", p.id, [], 0);
+      // allChoices가 없으므로 직접 처리
+      const myChoice = bot.myChoices[bot.myChoices.length - 1];
+      if (myChoice) {
+        const card = CARDS.find(c => c.id === myChoice.cid);
+        const tgt = myChoice.tgt?.map(t => pn(players, t)).join(", ") || "";
+        if (p.faction === "guardian") {
+          if (card.cat === "combat") return `${card.emoji} ${card.name}을 ${tgt}에게 썼다.`;
+          const secret = bot.secrets.filter(s => s.round === (bot._round || 1)).find(s => s.result && s.result !== "disrupted" && s.result !== "stolen" && s.result !== "unknown");
+          if (secret) {
+            const desc = _describeSecret(secret, players);
+            return desc || `${card.emoji} ${card.name}을 썼다.`;
+          }
+          return `${card.emoji} ${card.name}을 ${tgt ? tgt + "에게 " : ""}썼다.`;
+        } else {
+          // 공허: 거짓말
+          if (card.cat === "combat") {
+            const fakeCard = pick(["예지의 파편", "파수꾼의 눈", "추적자의 눈"]);
+            const nonTeam = oth.filter(x => !bot.vt.includes(x.id));
+            const fakeTgt = nonTeam.length >= 2 ? sample(nonTeam, 2).map(t => t.name).join(", ") : (nonTeam.length ? nonTeam[0].name : "");
+            return `${fakeCard}을 ${fakeTgt}에게 썼다.`;
+          }
+          return `${card.emoji} ${card.name}을 ${tgt ? tgt + "에게 " : ""}썼다.`;
+        }
+      }
     }
   }
 
@@ -1213,6 +1245,7 @@ export default function App() {
   const [pubLogs, setPubLogs] = useState([]);
   const [predictions, setPredictions] = useState({});
   const [revoteCandidates, setRevoteCandidates] = useState([]);
+  const [chatInput, setChatInput] = useState("");
   const ref = useRef(null);
 
   const addL = useCallback(m => setLog(p => [...p, m]), []);
@@ -1429,6 +1462,7 @@ export default function App() {
       case "ask_card": msg = `${tp?.name}, 어떤 카드 썼어?`; break;
       case "ask_target": msg = `${tp?.name}, 누구한테 썼어?`; break;
       case "ask_result": msg = `${tp?.name}, 결과가 뭐였어?`; break;
+      case "free": msg = claim; break;
       default: msg = claim; break;
     }
 
@@ -1805,6 +1839,11 @@ export default function App() {
               <button onClick={() => myDecl("trust", p.id)} style={{ ...S.btnSm("#10B981"), flex: 1, textAlign: "center" }}>🟢 {p.name} 신뢰</button>
               <button onClick={() => myDecl("faction", p.id, "void")} style={{ ...S.btnSm("#F59E0B"), flex: 1, textAlign: "center" }}>⚠️ 공허 지목</button>
             </div>)}</div>}
+          {dc < 3 && <div><div style={S.sub}>💬 자유 발언</div>
+            <form onSubmit={e => { e.preventDefault(); if (chatInput.trim() && dc < 3) { myDecl("free", 0, chatInput.trim()); setChatInput(""); } }} style={{ display: "flex", gap: 4 }}>
+              <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="직접 입력하세요..." style={{ flex: 1, padding: "6px 10px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#E2E8F0", fontSize: 11, outline: "none" }} />
+              <button type="submit" style={{ padding: "6px 12px", background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 6, color: "#60A5FA", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>전송</button>
+            </form></div>}
           {dc >= 3 && <div style={{ textAlign: "center", color: "#64748B", fontSize: 12, margin: "8px 0" }}>발언 완료</div>}
           <button onClick={() => setPhase("vote")} style={{ ...S.btn("#EF4444"), textAlign: "center", marginTop: 8 }}>🗳️ 투표로</button>
         </div>}
