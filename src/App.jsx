@@ -158,48 +158,79 @@ function localBotSpeak(bot, players, allChoices, round, publicLog, conversationS
 }
 
 function _guardianSpeak(bot, players, myChoice, round, publicLog, convSoFar) {
-  const parts = []; // 여러 문장을 조합
+  const parts = [];
 
-  // 1. 이번 라운드 자기 행동 설명 (전투카드 아닌 경우)
-  const actionDesc = _describeMyAction(myChoice, players);
-  if (actionDesc) parts.push(actionDesc);
-
-  // 2. 이번 라운드 새 정보 공유 (가장 중요!)
+  // 1. 이번 라운드 새 정보: 행동+결과를 하나로 자연스럽게
   const newSecrets = bot.secrets.filter(s => s.round === round && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
-  newSecrets.forEach(s => {
-    const desc = _describeSecret(s, players);
-    if (desc) parts.push(desc);
-  });
-
-  // 3. 교란당했으면 공유
   const disrupted = bot.secrets.filter(s => s.round === round && s.result === "disrupted");
-  if (disrupted.length) parts.push("이번에 교란당해서 결과를 못 받았다. 누가 교란했는지 모르겠다.");
 
-  // 4. 확정 공허 강력 지목
-  const confirmed = players.filter(p => p.alive && p.id !== bot.p.id && bot.kf[p.id] === "void");
-  if (confirmed.length > 0) {
-    parts.push(`${confirmed[0].name}은 공허가 확실하다. 이번에 반드시 추방해야 한다.`);
+  if (newSecrets.length > 0) {
+    const s = newSecrets[0];
+    // 행동+결과 통합 문장
+    switch (s.card) {
+      case "prophecy_shard": {
+        const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+        parts.push(s.result === "void_present"
+          ? `예지의 파편으로 ${names}을 봤는데 공허가 있다.`
+          : `예지의 파편으로 ${names}을 봤는데 공허가 없었다.`);
+        break;
+      }
+      case "sentinel_eye": {
+        const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+        parts.push(s.result === "same"
+          ? `파수꾼의 눈으로 ${names}을 봤더니 같은 진영이었다.`
+          : `파수꾼의 눈으로 ${names}을 봤더니 다른 진영이다.`);
+        break;
+      }
+      case "tracker_eye":
+        parts.push(`추적자의 눈으로 ${pn(players, s.target)}을 확인했는데 ${cn(s.result)}을 썼다.`);
+        break;
+      case "shadow_eye":
+        parts.push(typeof s.result === "number"
+          ? `미행의 눈으로 보니 ${pn(players, s.target)}이 ${pn(players, s.result)}을 지목했다.`
+          : `미행의 눈으로 보니 ${pn(players, s.target)}은 아무도 지목하지 않았다.`);
+        break;
+      case "vigilant_eye":
+        parts.push(s.result === "targeted"
+          ? `경계의 눈으로 보니 ${pn(players, s.target)}이 누군가에게 지목당했다.`
+          : `경계의 눈으로 보니 ${pn(players, s.target)}은 아무에게도 지목당하지 않았다.`);
+        break;
+      case "dead_memory":
+        if (s.result !== "no_death") parts.push(`망자의 기억으로 확인하니 ${pn(players, s.target)}의 마지막 행동은 ${cn(s.result)}이었다.`);
+        break;
+    }
+  } else if (disrupted.length) {
+    parts.push("교란당해서 결과를 못 받았다. 누가 교란한 거냐.");
+  } else {
+    // 정보 없는 경우: 전투 카드 썼거나 결과 없음
+    const actionDesc = _describeMyAction(myChoice, players);
+    if (actionDesc) parts.push(actionDesc);
   }
 
-  // 5. 의심 표현 (조사 결과 기반)
-  const suspects = players.filter(p => p.alive && p.id !== bot.p.id && bot.gs(p.id) > 0.15)
-    .sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
-  if (suspects.length > 0 && !confirmed.length) {
-    const s = suspects[0];
-    const suspLevel = bot.gs(s.id);
-    if (suspLevel > 0.5) {
-      parts.push(`${s.name}이 상당히 의심스럽다. 투표 때 고려하자.`);
-    } else if (suspLevel > 0.2) {
-      const reasons = [
-        `${s.name}이 좀 수상하다. 행동 패턴이 공허 같다.`,
-        `${s.name}의 발언을 주의 깊게 봐야 할 것 같다.`,
-        `${s.name}에 대해 추가 조사가 필요하다.`,
-      ];
-      parts.push(pick(reasons));
+  // 2. 확정 공허 강력 지목
+  const confirmed = players.filter(p => p.alive && p.id !== bot.p.id && bot.kf[p.id] === "void");
+  if (confirmed.length > 0) {
+    parts.push(`${confirmed[0].name}은 공허가 확실하다. 추방하자.`);
+  }
+
+  // 3. 의심 표현 (확정 없을 때만)
+  if (!confirmed.length) {
+    const suspects = players.filter(p => p.alive && p.id !== bot.p.id && bot.gs(p.id) > 0.15)
+      .sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
+    if (suspects.length > 0) {
+      const s = suspects[0];
+      if (bot.gs(s.id) > 0.5) {
+        parts.push(`${s.name}이 상당히 의심스럽다.`);
+      } else {
+        parts.push(pick([
+          `${s.name}이 좀 수상하다.`,
+          `${s.name}을 좀 더 지켜봐야겠다.`,
+        ]));
+      }
     }
   }
 
-  // 6. 이전 대화에서 모순 지적
+  // 4. 모순 지적 (이전 대화)
   if (convSoFar) {
     const knownCards = {};
     bot.secrets.filter(s => s.card === "tracker_eye" && typeof s.result === "string").forEach(s => {
@@ -208,36 +239,26 @@ function _guardianSpeak(bot, players, myChoice, round, publicLog, convSoFar) {
     for (const [tid, realCard] of Object.entries(knownCards)) {
       const tName = pn(players, +tid);
       const realCardObj = CARDS.find(c => c.id === realCard);
-      // 누가 정보 카드를 썼다고 주장하는데 실제로는 전투카드를 쓴 경우
       if (realCardObj?.cat === "combat") {
-        const claimedInfo = convSoFar.match(new RegExp(`${tName}.*?(예지|파수꾼|추적자|미행|경계|망자)`));
+        const claimedInfo = convSoFar.match(new RegExp(`${tName}.*?(예지|파수꾼|추적자|미행|경계)`));
         if (claimedInfo) {
-          parts.push(`잠깐, ${tName}이 정보 카드를 썼다고 했는데 내 추적자의 눈으로 확인하니 ${cn(realCard)}을 썼다. 거짓말을 하고 있다!`);
+          parts.push(`잠깐, ${tName}이 정보 카드를 썼다고? 내 추적자의 눈으로 보니 ${cn(realCard)}을 썼다. 거짓말이다!`);
           break;
         }
       }
     }
   }
 
-  // 7. 확정 수호자 신뢰 표현
-  const confirmedGuard = players.filter(p => p.alive && p.id !== bot.p.id && bot.kf[p.id] === "guardian");
-  if (confirmedGuard.length > 0 && Math.random() < 0.3) {
-    parts.push(`${confirmedGuard[0].name}은 수호자인 것 같다. 협력하자.`);
-  }
-
-  // 8. 아무 정보도 없으면 상황 판단 발언
+  // 5. 아무 정보도 없으면
   if (parts.length === 0) {
     const oth = players.filter(p => p.alive && p.id !== bot.p.id);
-    const fillers = [
-      "이번 라운드에는 특별한 정보를 못 얻었다. 다른 사람들 발언을 듣겠다.",
-      `아직 확실한 단서가 없다. ${pick(oth).name}은 어떤 카드를 썼나?`,
-      "조용한 사람이 더 의심스럽다. 정보가 있으면 공유해 달라.",
-      "아직 공허를 특정하기 어렵다. 조사 결과를 더 모아야 한다.",
-    ];
-    parts.push(pick(fillers));
+    parts.push(pick([
+      "특별한 정보는 없다. 다른 사람들 발언을 듣겠다.",
+      `확실한 단서가 없다. ${pick(oth).name}은 뭘 했나?`,
+      "정보가 있으면 공유해 달라. 조용한 사람이 더 의심스럽다.",
+    ]));
   }
 
-  // 최대 2문장까지 조합
   return parts.slice(0, 2).join(" ");
 }
 
@@ -247,117 +268,89 @@ function _voidSpeak(bot, players, myChoice, round, publicLog, convSoFar, brain) 
   const team = oth.filter(p => bot.vt.includes(p.id) && p.alive);
   if (!nonTeam.length) return null;
 
-  const parts = [];
-
-  // 공허는 자기가 뭘 했는지 거짓으로 포장해야 함
-  // 실제 행동을 숨기고 가짜 행동을 주장
-
-  // 전략 1: 가짜 카드 사용 주장 + 가짜 결과 (핵심!)
+  // 공허 전략: 가짜 정보 OR 프레이밍 OR 팀원 엄호 중 하나만 선택 (과잉 방지)
   const realCid = myChoice?.cid;
   const usedCombat = realCid && CARDS.find(c => c.id === realCid)?.cat === "combat";
 
-  if (usedCombat || Math.random() < brain.v_fake_info) {
-    // 전투카드 썼으면 반드시 가짜 정보 주장
-    const fakeCards = ["prophecy_shard", "sentinel_eye", "tracker_eye", "vigilant_eye"];
-    const fc = pick(fakeCards);
+  // 팀원이 의심받는 상황인지 체크
+  const teamUnderFire = team.length > 0 && convSoFar &&
+    team.some(t => convSoFar.includes(t.name) && (convSoFar.includes("의심") || convSoFar.includes("수상") || convSoFar.includes("공허")));
+  const suspTeam = teamUnderFire ? team.find(t => convSoFar.includes(t.name)) : null;
+
+  // 전략 선택 (하나만!)
+  const roll = Math.random();
+
+  // 팀원이 위험하면 엄호 우선 (40%)
+  if (suspTeam && roll < 0.40) {
+    // 엄호: 가짜 조사 결과에 팀원을 자연스럽게 포함
+    if (nonTeam.length >= 1) {
+      const otherTarget = pick(nonTeam);
+      return pick([
+        `예지의 파편으로 ${suspTeam.name}, ${otherTarget.name}을 봤는데 공허가 없었다. ${suspTeam.name}은 아닌 것 같다.`,
+        `파수꾼의 눈으로 ${suspTeam.name}, ${otherTarget.name}을 봤더니 같은 진영이었다.`,
+        `${suspTeam.name}을 의심하지 마라. 다른 쪽을 봐야 한다. ${otherTarget.name}이 더 수상하다.`,
+      ]);
+    }
+  }
+
+  // 가짜 정보 주장 (전투카드 썼으면 필수, 아니면 50%)
+  if (usedCombat || roll < 0.70) {
+    const fc = pick(["prophecy_shard", "sentinel_eye", "tracker_eye"]);
 
     if (fc === "prophecy_shard" && nonTeam.length >= 2) {
       const targets = sample(nonTeam, 2);
-      // 수호자를 안전하게 보이게 or 수호자를 의심스럽게
-      if (Math.random() < 0.6) {
-        // 팀원을 포함해서 "공허 없다" → 팀원 세탁
-        if (team.length) {
-          parts.push(`나는 예지의 파편으로 ${team[0].name}, ${targets[0].name}을 조사했다. 공허가 없었다.`);
-        } else {
-          parts.push(`나는 예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 조사했다. 공허가 없었다.`);
-        }
-      } else {
-        parts.push(`나는 예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 조사했다. 공허가 있다!`);
-      }
-    } else if (fc === "sentinel_eye" && nonTeam.length >= 1) {
-      if (team.length && Math.random() < 0.5) {
-        // 팀원과 확정 수호자가 "같은 진영" → 팀원 세탁
-        const confirmedG = nonTeam.find(p => bot.kf[p.id] === "guardian");
-        if (confirmedG) {
-          parts.push(`나는 파수꾼의 눈으로 ${team[0].name}, ${confirmedG.name}을 봤다. 같은 진영이다.`);
-        } else {
-          parts.push(`나는 파수꾼의 눈으로 ${pick(nonTeam).name}, ${team[0].name}을 봤다. 같은 진영이었다.`);
-        }
-      } else {
-        const targets = sample(nonTeam, Math.min(2, nonTeam.length));
-        parts.push(`나는 파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤다. 다른 진영이다.`);
-      }
-    } else if (fc === "tracker_eye") {
+      return Math.random() < 0.6
+        ? `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 없었다.`
+        : `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 있다!`;
+    }
+    if (fc === "sentinel_eye" && nonTeam.length >= 2) {
+      const targets = sample(nonTeam, 2);
+      return Math.random() < 0.5
+        ? `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 다른 진영이다. 둘 중 하나는 공허다.`
+        : `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 같은 진영이었다.`;
+    }
+    if (fc === "tracker_eye") {
       const target = pick(nonTeam);
-      const fakeSeen = pick(["abyssal_blade", "fog_veil", "disruption", "abyssal_touch"]);
       if (Math.random() < 0.5) {
-        // 수호자를 공허처럼 보이게
-        parts.push(`나는 추적자의 눈으로 ${target.name}을 봤더니 ${cn(fakeSeen)}을 썼다. 수상하다.`);
+        const fakeSeen = pick(["abyssal_blade", "fog_veil", "disruption", "abyssal_touch"]);
+        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(fakeSeen)}을 썼다. 수상하다.`;
       } else {
-        const infoCard = pick(["prophecy_shard", "sentinel_eye", "vigilant_eye"]);
-        parts.push(`나는 추적자의 눈으로 ${target.name}을 봤더니 ${cn(infoCard)}을 썼다.`);
+        const fakeInfo = pick(["prophecy_shard", "sentinel_eye", "vigilant_eye"]);
+        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(fakeInfo)}을 쓰고 있었다.`;
       }
-    } else {
-      const target = pick(nonTeam);
-      parts.push(`나는 경계의 눈으로 ${target.name}을 봤더니 누군가에게 지목당했다.`);
-    }
-  } else {
-    // 정보 카드 실제로 쓴 경우 → 선별적으로 진짜 결과 공유 (유리할 때만)
-    const newSecrets = bot.secrets.filter(s => s.round === round && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
-    const useful = newSecrets.find(s => {
-      // 수호자를 공허로 보이게 하는 결과만 공유
-      if (s.card === "prophecy_shard" && s.result === "void_present") return true;
-      if (s.card === "sentinel_eye" && s.result === "different") return true;
-      return false;
-    });
-    if (useful) {
-      const desc = _describeSecret(useful, players);
-      if (desc) parts.push("나는 " + desc.charAt(0).toLowerCase() + desc.slice(1));
-    } else {
-      // 가짜 행동 주장
-      const actionDesc = `나는 ${pick(["예지의 파편", "파수꾼의 눈", "추적자의 눈"])}을 사용했다.`;
-      parts.push(actionDesc);
     }
   }
 
-  // 전략 2: 수호자 프레이밍 (대화 맥락 반영)
-  if (Math.random() < brain.v_frame) {
+  // 프레이밍 (수호자를 공허로 몰기)
+  if (roll < 0.85) {
     const target = pick(nonTeam);
-    const frameLines = [
-      `${target.name}이 계속 정보를 안 공유한다. 뭔가 숨기는 게 있는 것 같다.`,
-      `${target.name}의 발언이 앞뒤가 안 맞는다. 공허 아닌가?`,
-      `${target.name}을 주목해야 한다. 행동 패턴이 이상하다.`,
-      `솔직히 ${target.name}이 제일 의심된다. 투표 때 잘 생각하자.`,
-    ];
-    parts.push(pick(frameLines));
+    return pick([
+      `${target.name}이 계속 정보를 안 공유한다. 숨기는 게 있는 것 같다.`,
+      `${target.name}의 행동이 이상하다. 전투 카드만 쓰는 거 아닌가?`,
+      `솔직히 ${target.name}이 제일 의심된다.`,
+      `${target.name}이 조용한 게 신경 쓰인다.`,
+    ]);
   }
 
-  // 전략 3: 팀원 엄호 (팀원이 대화에서 의심받는 경우)
-  if (team.length > 0 && convSoFar) {
-    const suspTeam = team.find(t => convSoFar.includes(t.name) && (convSoFar.includes("의심") || convSoFar.includes("수상") || convSoFar.includes("공허")));
-    if (suspTeam && Math.random() < brain.v_cover) {
-      const covers = [
-        `${suspTeam.name}은 수호자다. 내 조사 결과로 확인했다.`,
-        `${suspTeam.name}을 의심하는 건 잘못된 판단이다. 다른 곳을 봐야 한다.`,
-        `${suspTeam.name}은 내가 보증한다. 다른 사람을 의심하자.`,
-      ];
-      parts.push(pick(covers));
-    }
+  // 실제 정보 선별 공유 (유리할 때만)
+  const newSecrets = bot.secrets.filter(s => s.round === round && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
+  const useful = newSecrets.find(s => {
+    if (s.card === "prophecy_shard" && s.result === "void_present") return true;
+    if (s.card === "sentinel_eye" && s.result === "different") return true;
+    return false;
+  });
+  if (useful) {
+    const desc = _describeSecret(useful, players);
+    if (desc) return desc;
   }
 
-  // 최소 1문장 보장
-  if (parts.length === 0) {
-    const target = pick(nonTeam);
-    const fillers = [
-      `${target.name}이 조용한데 의심스럽다. 뭔가 말해봐라.`,
-      "이번 라운드에 정보를 좀 모았다. 의심가는 사람이 있다.",
-      `아직 확신은 없지만 ${target.name} 쪽을 더 조사해봐야 할 것 같다.`,
-    ];
-    parts.push(pick(fillers));
-  }
-
-  // 최대 2문장
-  return parts.slice(0, 2).join(" ");
+  // 기본
+  const target = pick(nonTeam);
+  return pick([
+    `${target.name}이 조용한데 뭔가 말해봐라.`,
+    `아직 확신은 없지만 ${target.name}이 신경 쓰인다.`,
+    "정보를 좀 모았는데 아직 정리가 안 됐다. 다른 사람들 발언을 듣겠다.",
+  ]);
 }
 
 // 로컬 반응 생성 — 더 다양하고 맥락에 맞게
@@ -1481,7 +1474,7 @@ export default function App() {
   const S = {
     page: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "#0B0E17", color: "#E2E8F0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" },
     hdr: { padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8", flexShrink: 0 },
-    main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 10px", position: "relative", minHeight: 0 },
+    main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 10px", position: "relative", minHeight: 0, overflow: "hidden" },
     logBox: { flex: 1, overflowY: "auto", padding: "6px 0", minHeight: 0, WebkitOverflowScrolling: "touch" },
     pnl: { flexShrink: 0, padding: "8px 0 12px", borderTop: "1px solid rgba(255,255,255,0.06)", maxHeight: "40vh", overflowY: "auto", WebkitOverflowScrolling: "touch" },
     btn: c => ({ display: "block", width: "100%", padding: "9px 14px", background: `${c}18`, border: `1px solid ${c}44`, borderRadius: 8, color: "#E2E8F0", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", marginBottom: 3 }),
