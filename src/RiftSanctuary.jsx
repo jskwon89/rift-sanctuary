@@ -33,8 +33,10 @@ class Bot {
     const al = ps.filter(p => p.alive && p.id !== this.p.id);
     if (!al.length) return this.p.id;
     if (this.p.faction === "guardian") {
-      const cf = al.filter(p => this.kf[p.id] === "void"); if (cf.length) return pick(cf).id;
-      if (Math.random() < this.sk) { const s = [...al].sort((a, b) => this.gs(b.id) - this.gs(a.id)); if (s.length && this.gs(s[0].id) > 0) return s[0].id; }
+      const cf = al.filter(p => this.kf[p.id] === "void");
+      // 확정 공허여도 30% 확률로 다른 사람 투표 (의견 불일치)
+      if (cf.length && Math.random() < 0.7) return pick(cf).id;
+      if (Math.random() < this.sk * 0.7) { const s = [...al].sort((a, b) => this.gs(b.id) - this.gs(a.id)); if (s.length && this.gs(s[0].id) > 0) return s[0].id; }
       return pick(al).id;
     }
     const nt = al.filter(p => !this.vt.includes(p.id)), pool = nt.length ? nt : al;
@@ -65,12 +67,15 @@ class Bot {
   _va(o, al, av) {
     const nv = al.filter(p => p.faction === "void").length, ng = al.filter(p => p.faction === "guardian").length;
     if (nv >= ng - 1 && av.find(c => c.id === "abyssal_blade")) { const g = o.filter(p => !this.vt.includes(p.id)); if (g.length) return { c: "abyssal_blade", t: [pick(g).id] }; }
+    // 정보통 수호자 정렬 (타겟팅용)
+    const ir = [...o].sort((a, b) => (b.actionHistory?.filter(h => h.cat === "info").length || 0) - (a.actionHistory?.filter(h => h.cat === "info").length || 0));
+    const nt = ir.filter(p => !this.vt.includes(p.id));
     const r = Math.random();
-    if (r < .28 && av.find(c => c.id === "abyssal_blade")) { const g = o.filter(p => !this.vt.includes(p.id)); return { c: "abyssal_blade", t: [(g.length ? pick(g) : pick(o)).id] }; }
-    if (r < .42 && av.find(c => c.id === "fog_veil")) return { c: "fog_veil", t: [this.p.id] };
-    if (r < .56 && av.find(c => c.id === "abyssal_touch")) { const s = [...o].sort((a, b) => (b.actionHistory?.filter(h => h.cat === "info").length || 0) - (a.actionHistory?.filter(h => h.cat === "info").length || 0)); const nt = s.filter(p => !this.vt.includes(p.id)); return { c: "abyssal_touch", t: [(nt.length ? nt[0] : s[0]).id] }; }
-    if (r < .68 && av.find(c => c.id === "disruption")) { const s = [...o].sort((a, b) => (b.actionHistory?.filter(h => h.cat === "info").length || 0) - (a.actionHistory?.filter(h => h.cat === "info").length || 0)); return { c: "disruption", t: [s[0].id] }; }
-    if (r < .78 && av.find(c => c.id === "specter_chain")) return { c: "specter_chain", t: [pick(o).id] };
+    if (r < .25 && av.find(c => c.id === "abyssal_blade")) { return { c: "abyssal_blade", t: [(nt.length ? nt[0] : pick(o)).id] }; }
+    if (r < .45 && av.find(c => c.id === "disruption")) return { c: "disruption", t: [(nt.length ? nt[0] : ir[0]).id] };
+    if (r < .60 && av.find(c => c.id === "abyssal_touch")) return { c: "abyssal_touch", t: [(nt.length ? nt[0] : ir[0]).id] };
+    if (r < .72 && av.find(c => c.id === "fog_veil")) return { c: "fog_veil", t: [this.p.id] };
+    if (r < .82 && av.find(c => c.id === "specter_chain")) return { c: "specter_chain", t: [(nt.length ? nt[0] : pick(o)).id] };
     return this._pi(o, av);
   }
   _pi(o, av) {
