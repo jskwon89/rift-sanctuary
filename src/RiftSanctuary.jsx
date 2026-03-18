@@ -240,6 +240,152 @@ ${factionRules}
 8. 초반 라운드에 조사당하는 것은 정상이다. "왜 나를 조사했냐"는 식의 반응을 하지 마라.`;
 }
 
+// ═══════════════════════════════════════════
+// 발언 후처리 검증 레이어
+// ═══════════════════════════════════════════
+const CARD_NAMES_MAP = {
+  "예지의 파편": "prophecy_shard", "파수꾼의 눈": "sentinel_eye",
+  "추적자의 눈": "tracker_eye", "미행의 눈": "shadow_eye",
+  "경계의 눈": "vigilant_eye", "망자의 기억": "dead_memory",
+  "심연의 칼날": "abyssal_blade", "결계의 방패": "ward_shield",
+  "안개의 장막": "fog_veil", "교란의 속삭임": "disruption",
+  "망령의 사슬": "specter_chain", "심연의 손길": "abyssal_touch"
+};
+
+function extractClaimedCard(msg) {
+  // "X로 ... 봤" 또는 "X으로 ... 확인" 패턴에서 카드명 추출
+  for (const [name, id] of Object.entries(CARD_NAMES_MAP)) {
+    const pat = new RegExp(`${name}(으로|로) `);
+    if (pat.test(msg)) return { name, id };
+  }
+  return null;
+}
+
+function validateSpeech(msg, bot, players, allChoices, round, claimedCards, conversation) {
+  const issues = [];
+  const claimed = extractClaimedCard(msg);
+  const myChoice = allChoices.find(c => c.pid === bot.p.id);
+
+  // 1. 카드 중복 주장 체크
+  if (claimed) {
+    const prev = claimedCards.get(claimed.id);
+    if (prev && prev !== bot.p.id) {
+      issues.push("card_dup");
+    }
+  }
+
+  // 2. 수호자가 결과 없이 카드+대상만 말함
+  if (bot.p.faction === "guardian" && claimed) {
+    const infoCards = ["prophecy_shard", "sentinel_eye", "tracker_eye", "shadow_eye", "vigilant_eye"];
+    if (infoCards.includes(claimed.id)) {
+      const hasResult = /봤는데|봤더니|확인했는데|결과|있다|없다|같은|다른|지목|썼다/.test(msg);
+      if (!hasResult) issues.push("no_result");
+    }
+  }
+
+  // 3. R1 잠금 카드 주장 (추적자 결과 언급은 제외)
+  if (round === 1 && claimed) {
+    const r1locked = ["abyssal_blade", "ward_shield", "specter_chain", "dead_memory"];
+    if (r1locked.includes(claimed.id)) issues.push("r1_locked");
+  }
+
+  // 4. 수호자가 실제 카드와 다른 카드를 주장
+  if (bot.p.faction === "guardian" && claimed && myChoice) {
+    const actualName = cn(myChoice.cid);
+    if (claimed.name !== actualName && !msg.includes("추적자의 눈으로") && !msg.includes("교란당")) {
+      issues.push("guardian_lie");
+    }
+  }
+
+  // 5. 근거 없는 의심 ("의심스럽다" 단독)
+  if (/의심스럽다|수상하다|신경.?쓰인다/.test(msg)) {
+    const hasEvidence = /봤는데|봤더니|결과|카드|모순|거짓|주장|확인/.test(msg);
+    if (!hasEvidence && msg.length < 30) issues.push("baseless_suspicion");
+  }
+
+  // 6. 아직 발언 안 한 사람에게 "조용하다"
+  if (/조용|말이 없|뭔가 말해/.test(msg)) {
+    issues.push("quiet_complaint");
+  }
+
+  return issues;
+}
+
+function fixSpeech(msg, issues, bot, players, allChoices, round, claimedCards) {
+  let fixed = msg;
+  const myChoice = allChoices.find(c => c.pid === bot.p.id);
+
+  // 카드 중복: 공허봇이면 다른 카드로 교체
+  if (issues.includes("card_dup") && bot.p.faction === "void") {
+    const usedIds = new Set(claimedCards.keys());
+    const available = ["prophecy_shard", "sentinel_eye", "tracker_eye", "vigilant_eye", "shadow_eye"]
+      .filter(id => !usedIds.has(id));
+    if (available.length) {
+      const newId = available[Math.floor(Math.random() * available.length)];
+      const newName = cn(newId);
+      const oth = players.filter(p => p.alive && p.id !== bot.p.id && !bot.vt.includes(p.id));
+      if (newId === "prophecy_shard" && oth.length >= 2) {
+        const ts = sample(oth, 2);
+        fixed = `${newName}으로 ${ts.map(t => t.name).join(", ")}을 봤는데 공허가 없었다.`;
+      } else if (newId === "sentinel_eye" && oth.length >= 2) {
+        const ts = sample(oth, 2);
+        fixed = `${newName}으로 ${ts.map(t => t.name).join(", ")}을 봤더니 같은 진영이었다.`;
+      } else if (oth.length) {
+        const t = oth[Math.floor(Math.random() * oth.length)];
+        fixed = `${newName}으로 ${t.name}을 봤더니 지목당했다.`;
+      }
+    } else {
+      // 모든 카드 주장됨 → 의심 분산 발언으로 대체
+      const oth = players.filter(p => p.alive && p.id !== bot.p.id && !bot.vt.includes(p.id));
+      if (oth.length) {
+        const t = oth[Math.floor(Math.random() * oth.length)];
+        fixed = `${t.name}의 행동이 좀 이상하다. 다들 주의해라.`;
+      }
+    }
+  }
+
+  // 수호자 결과 누락: 실제 결과 붙여주기
+  if (issues.includes("no_result") && bot.p.faction === "guardian") {
+    const newSecrets = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
+    if (newSecrets.length) {
+      const s = newSecrets[0];
+      if (s.card === "prophecy_shard") {
+        const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+        fixed = s.result === "void_present" ? `예지의 파편으로 ${names}을 봤는데 공허가 있다.` : `예지의 파편으로 ${names}을 봤는데 공허가 없었다.`;
+      } else if (s.card === "sentinel_eye") {
+        const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+        fixed = s.result === "same" ? `파수꾼의 눈으로 ${names}을 봤더니 같은 진영이었다.` : `파수꾼의 눈으로 ${names}을 봤더니 다른 진영이다.`;
+      } else if (s.card === "tracker_eye") {
+        fixed = `추적자의 눈으로 ${pn(players, s.target)}을 확인했는데 ${cn(s.result)}을 썼다.`;
+      } else if (s.card === "shadow_eye") {
+        fixed = `미행의 눈으로 ${pn(players, s.target)}을 봤더니 ${typeof s.result === "number" ? pn(players, s.result) + "을 지목했다" : "지목 없음"}.`;
+      } else if (s.card === "vigilant_eye") {
+        fixed = `경계의 눈으로 ${pn(players, s.target)}을 봤더니 ${s.result === "targeted" ? "누군가에게 지목당했다" : "지목당하지 않았다"}.`;
+      }
+    }
+  }
+
+  // 수호자 거짓말: 실제 정보로 교체
+  if (issues.includes("guardian_lie") && bot.p.faction === "guardian") {
+    const newSecrets = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
+    if (newSecrets.length) {
+      const s = newSecrets[0];
+      if (s.card === "prophecy_shard") {
+        const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+        fixed = s.result === "void_present" ? `예지의 파편으로 ${names}을 봤는데 공허가 있다.` : `예지의 파편으로 ${names}을 봤는데 공허가 없었다.`;
+      }
+    }
+  }
+
+  // 조용하다 불만: 제거
+  if (issues.includes("quiet_complaint")) {
+    const oth = players.filter(p => p.alive && p.id !== bot.p.id);
+    if (oth.length) fixed = `정보가 있으면 공유해 달라.`;
+  }
+
+  return fixed;
+}
+
 // 개별 에이전트 순차 토론
 async function generateDiscussion(players, bots, allChoices, round, gameHistory, publicLog) {
   const aliveBots = players.filter(p => p.alive && p.id !== 0).map(p => bots[p.id]).filter(Boolean);
@@ -251,6 +397,7 @@ async function generateDiscussion(players, bots, allChoices, round, gameHistory,
 
   const results = [];
   let conversation = "";
+  const claimedCards = new Map(); // cardId -> playerId
 
   // 좌석 순서대로 1명씩 API 호출
   for (const bot of aliveBots) {
@@ -266,8 +413,18 @@ ${bot.p.faction === "void" ? "(★ 너는 공허다. 패스하지 마라. 가짜
 
     try {
       const text = await callAPI(system, user);
-      const clean = text.trim().replace(/^["']|["']$/g, "").replace(/^[A-Z]\d+:\s*/i, "");
+      let clean = text.trim().replace(/^["']|["']$/g, "").replace(/^[A-Z]\d+:\s*/i, "");
       if (clean && !clean.includes("패스") && clean.length > 2) {
+        // ═══ 후처리 검증 ═══
+        const issues = validateSpeech(clean, bot, players, allChoices, round, claimedCards, conversation);
+        if (issues.length > 0) {
+          console.log(`[검증] ${bot.p.name}(${bot.p.faction}) 문제 발견:`, issues.join(", "), "→ 수정");
+          clean = fixSpeech(clean, issues, bot, players, allChoices, round, claimedCards);
+        }
+        // 카드 주장 기록
+        const claimed = extractClaimedCard(clean);
+        if (claimed) claimedCards.set(claimed.id, bot.p.id);
+
         results.push({ id: bot.p.id, msg: clean });
         conversation += `${bot.p.name}: "${clean}"\n`;
       }
