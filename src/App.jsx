@@ -2062,7 +2062,7 @@ export default function App() {
           {loading && <div style={{ textAlign: "center", padding: "12px 0", color: "#94A3B8", fontSize: 13 }}>{phase === "vote" || phase === "revote" ? "🗳️ 봇들이 투표 중..." : phase === "night_resolving" ? "🌙 밤 결과 처리 중..." : "💭 각 봇이 순서대로 발언 중..."}</div>}
         </div>}
 
-        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 20px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "safe center", alignItems: "center", padding: "20px 20px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
           <div style={{ fontSize: 11, letterSpacing: 6, color: "#475569", marginBottom: 20, marginTop: 40 }}>RIFT OF THE SANCTUARY</div>
           <h1 style={{ fontSize: 30, fontWeight: 900, margin: "0 0 16px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
           <p style={{ color: "#475569", margin: "0 0 40px", fontSize: 13 }}>1인 vs AI · 프로토타입</p>
