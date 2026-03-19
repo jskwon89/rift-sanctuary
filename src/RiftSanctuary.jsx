@@ -2121,19 +2121,65 @@ export default function App() {
 
         {phase === "discuss" && !loading && <div style={S.pnl}>
           <div style={{ fontSize: 12, color: "#F59E0B", marginBottom: 4, textAlign: "center" }}>☀️ 토론 ({dc}/3)</div>
-          {recentSecrets.length > 0 && dc < 3 && <div><div style={S.sub}>📋 조사 결과 공유</div>
-            {recentSecrets.map((s, i) => <button key={`s${i}`} onClick={() => myDecl("info_share", s.targets?.[0] || s.target || HID, s.msg)} style={S.btnSm("#8B5CF6")}>R{s.round}: {s.msg}</button>)}</div>}
-          {dc < 3 && <div><div style={S.sub}>🎯 발언</div>
-            {aliveOth.map(p => <div key={p.id} style={{ display: "flex", gap: 3, marginBottom: 3 }}>
-              <button onClick={() => myDecl("suspect", p.id)} style={{ ...S.btnSm("#EF4444"), flex: 1, textAlign: "center" }}>🔴 {p.name} 의심</button>
-              <button onClick={() => myDecl("trust", p.id)} style={{ ...S.btnSm("#10B981"), flex: 1, textAlign: "center" }}>🟢 {p.name} 신뢰</button>
-              <button onClick={() => myDecl("faction", p.id, "void")} style={{ ...S.btnSm("#F59E0B"), flex: 1, textAlign: "center" }}>⚠️ 공허 지목</button>
-            </div>)}</div>}
-          {dc < 3 && <div style={{ marginTop: 6 }}><div style={S.sub}>✏️ 자유 발언</div>
-            <div style={{ display: "flex", gap: 4 }}>
-              <input value={freeText} onChange={e => setFreeText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && freeText.trim()) { myDecl("free", 0, freeText.trim()); setFreeText(""); } }} placeholder="직접 입력 (거짓말 가능)" style={{ flex: 1, padding: "6px 8px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, color: "#E2E8F0", fontSize: 12, outline: "none" }} />
-              <button onClick={() => { if (freeText.trim()) { myDecl("free", 0, freeText.trim()); setFreeText(""); } }} style={{ ...S.btnSm("#8B5CF6"), whiteSpace: "nowrap" }}>전송</button>
-            </div></div>}
+          {dc < 3 && <>
+            {/* 조사 결과 공유 (진실) */}
+            {recentSecrets.length > 0 && <div><div style={S.sub}>📋 조사 결과 공유</div>
+              {recentSecrets.map((s, i) => <button key={`s${i}`} onClick={() => myDecl("free", 0, s.msg)} style={S.btnSm("#8B5CF6")}>{s.msg}</button>)}</div>}
+
+            {/* 대상별 발언 */}
+            <div><div style={S.sub}>🎯 대상 지정</div>
+              {aliveOth.map(p => <div key={p.id} style={{ display: "flex", gap: 3, marginBottom: 3, flexWrap: "wrap" }}>
+                <button onClick={() => myDecl("free", 0, `${p.name}이(가) 의심스럽다`)} style={{ ...S.btnSm("#EF4444"), flex: 1, minWidth: 70, textAlign: "center" }}>🔴 {p.name} 의심</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 수호자라고 생각한다`)} style={{ ...S.btnSm("#10B981"), flex: 1, minWidth: 70, textAlign: "center" }}>🟢 {p.name} 신뢰</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 공허다. 추방해야 한다`)} style={{ ...S.btnSm("#F59E0B"), flex: 1, minWidth: 70, textAlign: "center" }}>⚠️ 공허 지목</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}, 이번 밤에 어떤 카드 썼나? 결과를 말해라`)} style={{ ...S.btnSm("#64748B"), flex: 1, minWidth: 70, textAlign: "center" }}>❓ 질문</button>
+              </div>)}</div>
+
+            {/* 모순 지적 (2명 선택) */}
+            {(() => {
+              const disc = _roundDiscussions[round] || [];
+              const claimedBy = {};
+              disc.forEach(d => { const c = extractClaimedCard(d.msg); if (c) { if (!claimedBy[c.id]) claimedBy[c.id] = []; claimedBy[c.id].push(d); } });
+              const dups = Object.entries(claimedBy).filter(([, arr]) => arr.length >= 2);
+              return dups.length > 0 && <div><div style={S.sub}>⚡ 모순 지적</div>
+                {dups.map(([cid, arr]) => <button key={cid} onClick={() => myDecl("free", 0, `${arr.map(d => d.name).join("과 ")}가 둘 다 ${cn(cid)}를 썼다고 했는데, 같은 라운드에 같은 카드는 불가능하다. 둘 중 하나가 거짓말이다`)} style={S.btnSm("#F97316")}>{arr.map(d => d.name).join(" vs ")} — {cn(cid)} 중복!</button>)}</div>;
+            })()}
+
+            {/* 일반 발언 */}
+            <div><div style={S.sub}>💬 일반</div>
+              <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                <button onClick={() => myDecl("free", 0, "정보가 있으면 공유해 달라")} style={S.btnSm("#6B7280")}>정보 요청</button>
+                <button onClick={() => myDecl("free", 0, "아직 판단하기 이르다. 좀 더 지켜보자")} style={S.btnSm("#6B7280")}>관망</button>
+                <button onClick={() => myDecl("free", 0, "이번 투표가 중요하다. 신중하게 골라야 한다")} style={S.btnSm("#6B7280")}>신중 촉구</button>
+                {round >= 2 && <button onClick={() => myDecl("free", 0, "이전 라운드 발언과 지금 발언이 모순되는 사람이 있다")} style={S.btnSm("#F97316")}>모순 경고</button>}
+              </div></div>
+
+            {/* 공허 전용: 거짓말 */}
+            {human?.faction === "void" && <div><div style={S.sub}>🌑 거짓말 (공허 전용)</div>
+              <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                {aliveOth.filter(p => p.id !== 0).length >= 2 && (() => {
+                  const targets = aliveOth.filter(p => !players.find(x => x.id === 0 && x.faction === "void" && bots[p.id]?.vt?.includes(0)));
+                  const t2 = targets.length >= 2 ? [targets[0], targets[1]] : targets.length >= 1 ? [targets[0], aliveOth[0]] : [];
+                  return t2.length >= 2 && <>
+                    <button onClick={() => myDecl("free", 0, `예지의 파편으로 ${t2[0].name}, ${t2[1].name}을 봤는데 공허가 있다`)} style={S.btnSm("#DC2626")}>예지 거짓: {t2[0].name},{t2[1].name} 공허有</button>
+                    <button onClick={() => myDecl("free", 0, `예지의 파편으로 ${t2[0].name}, ${t2[1].name}을 봤는데 공허가 없었다`)} style={S.btnSm("#DC2626")}>예지 거짓: {t2[0].name},{t2[1].name} 공허無</button>
+                  </>;
+                })()}
+                {aliveOth.length >= 1 && (() => {
+                  const t = aliveOth.find(p => !bots[p.id]?.vt?.includes(0)) || aliveOth[0];
+                  return <>
+                    <button onClick={() => myDecl("free", 0, `추적자의 눈으로 ${t.name}을 봤더니 안개의 장막을 썼다. 수상하다`)} style={S.btnSm("#DC2626")}>추적자 거짓: {t.name} 안개</button>
+                    <button onClick={() => myDecl("free", 0, `추적자의 눈으로 ${t.name}을 봤더니 교란의 속삭임을 썼다`)} style={S.btnSm("#DC2626")}>추적자 거짓: {t.name} 교란</button>
+                  </>;
+                })()}
+                {(() => {
+                  const voidTeam = aliveOth.filter(p => bots[p.id]?.vt?.includes(0));
+                  return voidTeam.length > 0 && voidTeam.map(tm =>
+                    <button key={`def${tm.id}`} onClick={() => myDecl("free", 0, `${tm.name}은(는) 수호자다. 의심하지 마라`)} style={S.btnSm("#7C3AED")}>팀원 엄호: {tm.name}</button>
+                  );
+                })()}
+              </div></div>}
+          </>}
           {dc >= 3 && <div style={{ textAlign: "center", color: "#64748B", fontSize: 12, margin: "8px 0" }}>발언 완료</div>}
           <button onClick={() => setPhase("vote")} style={{ ...S.btn("#EF4444"), textAlign: "center", marginTop: 8 }}>🗳️ 투표로</button>
         </div>}
