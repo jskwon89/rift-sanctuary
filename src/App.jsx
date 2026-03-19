@@ -1987,9 +1987,9 @@ export default function App() {
   const recentSecrets = useMemo(() => secrets.filter(s => s.round === round && s.result !== "no_death"), [secrets, round]);
 
   const S = {
-    page: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "#0B0E17", color: "#E2E8F0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" },
+    page: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "#0B0E17", color: "#E2E8F0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column" },
     hdr: { padding: "6px 10px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8", flexShrink: 0 },
-    main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 8px", position: "relative", minHeight: 0, boxSizing: "border-box" },
+    main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 8px", position: "relative", minHeight: 0, boxSizing: "border-box", overflow: "hidden" },
     logBox: { flex: 1, overflowY: "auto", padding: "4px 0", minHeight: 0, WebkitOverflowScrolling: "touch" },
     pnl: { flexShrink: 0, padding: "6px 0 10px", borderTop: "1px solid rgba(255,255,255,0.06)", maxHeight: "50vh", overflowY: "auto", WebkitOverflowScrolling: "touch" },
     btn: c => ({ display: "block", width: "100%", padding: "10px 12px", background: `${c}18`, border: `1px solid ${c}44`, borderRadius: 8, color: "#E2E8F0", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left", marginBottom: 4, boxSizing: "border-box" }),
