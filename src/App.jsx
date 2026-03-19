@@ -2062,31 +2062,28 @@ export default function App() {
           {loading && <div style={{ textAlign: "center", padding: "12px 0", color: "#94A3B8", fontSize: 13 }}>{phase === "vote" || phase === "revote" ? "🗳️ 봇들이 투표 중..." : phase === "night_resolving" ? "🌙 밤 결과 처리 중..." : "💭 각 봇이 순서대로 발언 중..."}</div>}
         </div>}
 
-        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 16px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-          <div style={{ fontSize: 12, letterSpacing: 6, color: "#475569", marginBottom: 16 }}>RIFT OF THE SANCTUARY</div>
-          <h1 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 12px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
-          <p style={{ color: "#475569", margin: "0 0 36px", fontSize: 13 }}>1인 vs AI · 프로토타입</p>
+        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 20px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+          <div style={{ fontSize: 11, letterSpacing: 6, color: "#475569", marginBottom: 20 }}>RIFT OF THE SANCTUARY</div>
+          <h1 style={{ fontSize: 30, fontWeight: 900, margin: "0 0 16px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
+          <p style={{ color: "#475569", margin: "0 0 40px", fontSize: 13 }}>1인 vs AI · 프로토타입</p>
 
-          <div style={{ marginBottom: 20, width: "100%", maxWidth: 320 }}>
-            <label style={{ display: "block", fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>🔑 Anthropic API Key <span style={{ color: "#EF4444" }}>*필수</span></label>
-            <input
-              type="password"
-              placeholder="sk-ant-..."
-              value={pendingApiKey}
-              onChange={e => setPendingApiKey(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "#E2E8F0", fontSize: 13, outline: "none", boxSizing: "border-box" }}
-            />
-            <div style={{ fontSize: 10, color: "#64748B", marginTop: 4 }}>
-              API 키는 <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#60A5FA" }}>console.anthropic.com</a>에서 발급받으세요
+          {/* 모드 선택 */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 28, width: "100%", maxWidth: 340 }}>
+            <button onClick={() => setPendingApiKey("")} style={{ flex: 1, padding: "14px 8px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, background: !pendingApiKey ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.03)", border: !pendingApiKey ? "1px solid rgba(16,185,129,0.4)" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0", textAlign: "center" }}>🎮 무료 모드<br/><span style={{ fontSize: 10, fontWeight: 400, color: "#94A3B8" }}>로컬 AI · 즉시 플레이</span></button>
+            <button onClick={() => { if (!pendingApiKey) setPendingApiKey(" "); }} style={{ flex: 1, padding: "14px 8px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, background: pendingApiKey ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.03)", border: pendingApiKey ? "1px solid rgba(139,92,246,0.4)" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0", textAlign: "center" }}>✨ 프리미엄<br/><span style={{ fontSize: 10, fontWeight: 400, color: "#94A3B8" }}>Claude API · 자연어 대화</span></button>
+          </div>
+
+          {/* 프리미엄: API 키 + 모델 선택 */}
+          {pendingApiKey && <div style={{ marginBottom: 24, width: "100%", maxWidth: 340 }}>
+            <input type="password" placeholder="sk-ant-..." value={pendingApiKey.trim()} onChange={e => setPendingApiKey(e.target.value)} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "#E2E8F0", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8 }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setPendingModel("sonnet")} style={{ flex: 1, padding: "8px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, background: pendingModel === "sonnet" ? "rgba(59,130,246,0.25)" : "rgba(255,255,255,0.05)", border: pendingModel === "sonnet" ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0", textAlign: "center" }}>⚡ Sonnet</button>
+              <button onClick={() => setPendingModel("opus")} style={{ flex: 1, padding: "8px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, background: pendingModel === "opus" ? "rgba(139,92,246,0.25)" : "rgba(255,255,255,0.05)", border: pendingModel === "opus" ? "1px solid #8B5CF6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0", textAlign: "center" }}>🧠 Opus</button>
             </div>
-          </div>
+          </div>}
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-            <button onClick={() => setPendingModel("sonnet")} style={{ padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, background: pendingModel === "sonnet" ? "rgba(59,130,246,0.25)" : "rgba(255,255,255,0.05)", border: pendingModel === "sonnet" ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0" }}>⚡ Sonnet<br/><span style={{ fontSize: 10, fontWeight: 400, color: "#94A3B8" }}>빠름 · 일반</span></button>
-            <button onClick={() => setPendingModel("opus")} style={{ padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, background: pendingModel === "opus" ? "rgba(139,92,246,0.25)" : "rgba(255,255,255,0.05)", border: pendingModel === "opus" ? "1px solid #8B5CF6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0" }}>🧠 Opus<br/><span style={{ fontSize: 10, fontWeight: 400, color: "#94A3B8" }}>깊은 추론 · 느림</span></button>
-          </div>
-          <div style={{ display: "flex", gap: 12 }}>{[5, 8].map(n => <button key={n} disabled={!pendingApiKey} onClick={() => { setPendingN(n); setPhase("rules"); }} style={{ padding: "14px 28px", background: pendingApiKey ? "rgba(59,130,246,0.1)" : "rgba(100,100,100,0.1)", border: pendingApiKey ? "1px solid rgba(59,130,246,0.3)" : "1px solid rgba(100,100,100,0.2)", borderRadius: 8, color: pendingApiKey ? "#E2E8F0" : "#64748B", fontSize: 15, fontWeight: 700, cursor: pendingApiKey ? "pointer" : "not-allowed" }}>{n}인</button>)}</div>
-          {!pendingApiKey && <div style={{ marginTop: 8, fontSize: 11, color: "#EF4444" }}>API 키를 입력해야 게임을 시작할 수 있습니다</div>}
+          {/* 인원 선택 */}
+          <div style={{ display: "flex", gap: 12 }}>{[5, 8].map(n => <button key={n} onClick={() => { setPendingN(n); setPhase("rules"); }} style={{ padding: "16px 32px", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 10, color: "#E2E8F0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{n}인</button>)}</div>
         </div>}
 
         {phase === "rules" && <div style={{ flex: 1, overflowY: "auto", padding: "12px 4px", WebkitOverflowScrolling: "touch" }}>
