@@ -286,13 +286,15 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
         parts.push(`${tName}이 전투/방해 카드를 썼다. 주의해야 한다.`);
       }
     }
-    // 예지의 파편으로 공허 있다 → 상황별 반응
+    // 예지의 파편으로 공허 있다 → 반드시 둘 다 언급 (한 명만 찍지 않음)
     if (s.card === "prophecy_shard" && s.result === "void_present") {
-      const names = (s.targets || []).map(t => pn(players, t)).join(", ");
-      if (situation === "critical" || situation === "endgame") {
-        parts.push(`${names} 중 공허가 있다. 지금 실수하면 진다. 신중하게 골라야 한다.`);
-      } else {
-        parts.push(`${names} 중 공허가 있으니 주의해라.`);
+      const names = (s.targets || []).map(t => pn(players, t));
+      if (names.length === 2) {
+        if (situation === "critical" || situation === "endgame") {
+          parts.push(`${names[0]}과 ${names[1]} 중 한 명이 공허다. 지금 실수하면 진다.`);
+        } else {
+          parts.push(`${names[0]}과 ${names[1]} 둘 중 누가 공허인지는 아직 모른다. 추가 조사가 필요하다.`);
+        }
       }
     }
     // 파수꾼의 눈 "다르다" → 추가 분석
@@ -310,7 +312,29 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   }
 
-  // 1.5 상황 긴박감 반영
+  // 1.5 카드 중복 감지 — 같은 라운드에 같은 카드를 2명이 주장
+  if (convSoFar && claimedCards.size > 0 && parts.length < 2) {
+    // 내 카드와 같은 카드를 다른 사람이 주장했나?
+    const myCardClaimed = myChoice ? extractClaimedCard(describeSecret(newSecrets[0], players) || "") : null;
+    if (myCardClaimed && claimedCards.has(myCardClaimed.id) && claimedCards.get(myCardClaimed.id) !== bot.p.id) {
+      const other = pn(players, claimedCards.get(myCardClaimed.id));
+      parts.push(`잠깐, ${other}도 ${myCardClaimed.name}을 썼다고 했는데 나도 썼다. 같은 라운드에 같은 카드는 불가능하다. ${other}가 거짓말이다.`);
+    }
+    // 다른 2명이 같은 카드를 주장한 경우
+    const cardOwners = {};
+    for (const [cid, pid] of claimedCards.entries()) {
+      if (!cardOwners[cid]) cardOwners[cid] = [];
+      cardOwners[cid].push(pid);
+    }
+    for (const [cid, pids] of Object.entries(cardOwners)) {
+      if (pids.length >= 2 && !pids.includes(bot.p.id)) {
+        parts.push(`${pids.map(id => pn(players, id)).join("과 ")}가 둘 다 ${cn(cid)}를 썼다고 했다. 같은 카드를 2명이 쓸 수 없다. 둘 중 하나가 거짓말이다.`);
+        break;
+      }
+    }
+  }
+
+  // 1.6 상황 긴박감 반영
   if (situation === "critical" && !parts.length) {
     const confirmed = oth.filter(p => bot.kf[p.id] === "void");
     if (confirmed.length) {
@@ -390,28 +414,63 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   }
 
-  // 4. 확정 정보 기반 추론 (이전 라운드 포함)
+  // 4. 교차 추론 (여러 조사 결과 조합)
+  if (parts.length < 2) {
+    // 예지 "공허 있다" + 파수꾼 "같은 진영" → 범위 좁히기
+    const prophecies = bot.secrets.filter(s => s.card === "prophecy_shard" && s.result === "void_present");
+    const sentinels = bot.secrets.filter(s => s.card === "sentinel_eye");
+    for (const pr of prophecies) {
+      if (!pr.targets || pr.targets.length < 2) continue;
+      const [a, b] = pr.targets;
+      // a나 b 중 하나가 확정 수호자면 나머지가 공허
+      if (bot.kf[a] === "guardian" && !parts.some(p => p.includes(pn(players, b)))) {
+        parts.push(`예지의 파편으로 ${pn(players, a)}, ${pn(players, b)} 중 공허가 있었고, ${pn(players, a)}은 수호자로 확인됐다. 따라서 ${pn(players, b)}이 공허다!`);
+        bot.kf[b] = "void"; bot.as(b, 0.5);
+        break;
+      }
+      if (bot.kf[b] === "guardian" && !parts.some(p => p.includes(pn(players, a)))) {
+        parts.push(`예지의 파편으로 ${pn(players, a)}, ${pn(players, b)} 중 공허가 있었고, ${pn(players, b)}은 수호자로 확인됐다. 따라서 ${pn(players, a)}이 공허다!`);
+        bot.kf[a] = "void"; bot.as(a, 0.5);
+        break;
+      }
+      // 파수꾼 "같은 진영" + 예지 "공허 있다" → 범위 확장
+      for (const se of sentinels) {
+        if (se.result === "same" && se.targets?.length === 2) {
+          const [x, y] = se.targets;
+          // a와 x가 같은 진영이고 a,b에 공허가 있으면 → x도 의심
+          if ((x === a || x === b) && !parts.some(p => p.includes(pn(players, y)))) {
+            const voidSuspect = x === a ? a : b;
+            parts.push(`${pn(players, x)}와 ${pn(players, y)}는 같은 진영이고, ${pn(players, pr.targets[0])}, ${pn(players, pr.targets[1])} 중 공허가 있다. ${pn(players, voidSuspect)}가 공허면 ${pn(players, y)}도 공허다.`);
+            break;
+          }
+          if ((y === a || y === b) && !parts.some(p => p.includes(pn(players, x)))) {
+            const voidSuspect = y === a ? a : b;
+            parts.push(`${pn(players, x)}와 ${pn(players, y)}는 같은 진영이고, ${pn(players, pr.targets[0])}, ${pn(players, pr.targets[1])} 중 공허가 있다. ${pn(players, voidSuspect)}가 공허면 ${pn(players, x)}도 공허다.`);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // 5. 의심도 기반 추론 (단, 예지는 두 대상 모두 언급)
   if (!parts.length) {
     const suspects = oth.filter(p => bot.gs(p.id) > 0.15).sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
     if (suspects.length) {
       const s = suspects[0];
       const evidence = bot.secrets.find(sec =>
-        (sec.card === "prophecy_shard" && sec.result === "void_present" && sec.targets?.includes(s.id)) ||
-        (sec.card === "sentinel_eye" && sec.result === "different" && sec.targets?.includes(s.id)) ||
-        (sec.card === "tracker_eye" && sec.target === s.id && ["abyssal_blade", "fog_veil", "disruption", "abyssal_touch"].includes(sec.result))
+        (sec.card === "tracker_eye" && sec.target === s.id && ["abyssal_blade", "fog_veil", "disruption", "abyssal_touch"].includes(sec.result)) ||
+        (sec.card === "sentinel_eye" && sec.result === "different" && sec.targets?.includes(s.id))
       );
       if (evidence) {
         const desc = describeSecret(evidence, players);
-        if (desc && !parts.some(p => p.includes(s.name))) {
-          parts.push(`이전에 ${desc} ${s.name}을 주시해야 한다.`);
-        }
-      } else {
-        // 교차 검증: 여러 정보를 조합
-        const prophecyHits = bot.secrets.filter(sec => sec.card === "prophecy_shard" && sec.result === "void_present" && sec.targets?.includes(s.id));
-        const sentinelHits = bot.secrets.filter(sec => sec.card === "sentinel_eye" && sec.result === "different" && sec.targets?.includes(s.id));
-        if (prophecyHits.length + sentinelHits.length >= 2) {
-          parts.push(`여러 조사 결과를 종합하면 ${s.name}이 공허일 가능성이 높다.`);
-        }
+        if (desc) parts.push(`이전에 ${desc} ${s.name}을 주시해야 한다.`);
+      }
+      // 예지는 두 명 모두 언급해야 함
+      const propEvidence = bot.secrets.find(sec => sec.card === "prophecy_shard" && sec.result === "void_present" && sec.targets?.includes(s.id));
+      if (!evidence && propEvidence && propEvidence.targets?.length === 2) {
+        const names = propEvidence.targets.map(t => pn(players, t)).join(", ");
+        parts.push(`이전에 ${names} 중 공허가 있었다. 추가 조사가 필요하다.`);
       }
     }
   }
@@ -588,25 +647,29 @@ function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards
     }
   }
 
-  // === 전략 6: 수호자 프레이밍 — 성격별 ===
+  // === 전략 6: 수호자 프레이밍 — 발언 내용 기반 ===
   if (nonTeam.length) {
-    const target = pick(nonTeam);
+    // 아직 발언 안 한 사람 우선 / 발언했지만 정보 없는 사람
+    const notSpoken = nonTeam.filter(p => !convSoFar || !convSoFar.includes(p.name));
+    const spokeNoInfo = nonTeam.filter(p => convSoFar?.includes(p.name) && !convSoFar.includes(`${p.name}: "`) || (convSoFar?.includes(`${p.name}:`) && !/파편|눈|추적|미행|경계/.test(convSoFar.split(p.name).pop()?.split("\n")[0] || "")));
+    const target = notSpoken.length ? pick(notSpoken) : spokeNoInfo.length ? pick(spokeNoInfo) : pick(nonTeam);
+
     if (personality === "aggressive") {
       return pick([
-        `${target.name}이 수상하다. 유용한 정보를 하나도 안 줬다.`,
-        `${target.name}을 이번에 추방하자. 더 기다릴 이유가 없다.`,
-        `솔직히 ${target.name}이 공허 같다. 행동 패턴이 이상하다.`,
+        `${target.name}이 수상하다. 추방하자.`,
+        `솔직히 ${target.name}이 공허 같다.`,
+        `${target.name}을 이번에 추방해야 한다.`,
       ]);
     } else if (personality === "analytical") {
       return pick([
-        `${target.name}의 주장을 정리해 보면 앞뒤가 안 맞는 부분이 있다.`,
-        `${target.name}이 사용했다는 카드와 결과를 다시 검증해 봐야 한다.`,
+        `${target.name}의 주장을 검증해 봐야 한다.`,
+        `${target.name}이 어떤 카드를 썼는지 확인이 필요하다.`,
         `${target.name}을 좀 더 조사해 볼 필요가 있다.`,
       ]);
     } else {
       return pick([
-        `${target.name}의 행동이 좀 이상하다. 다들 주의해라.`,
-        `${target.name}이 정보를 안 주고 있다. 뭘 숨기는 거 아닌가?`,
+        `${target.name}에 대해 좀 더 알아봐야 한다.`,
+        `${target.name}이 뭘 했는지 궁금하다.`,
         `${target.name}을 조사해 봐야 한다고 생각한다.`,
       ]);
     }
