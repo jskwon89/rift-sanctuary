@@ -346,15 +346,11 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   }
 
-  // 1.7 다른 봇에게 질문/정보 요청
+  // 1.7 다른 봇에게 질문/정보 요청 — 아직 발언 안 한 사람에게만
   if (!parts.length && convSoFar && personality === "analytical" && Math.random() < 0.4) {
-    // 아직 발언 안 한 정보 카드 사용자에게 질문
-    const infoUsers = oth.filter(p => {
-      const ch = allChoices.find(c => c.pid === p.id);
-      return ch && CARDS.find(c => c.id === ch.cid)?.cat === "info";
-    });
-    if (infoUsers.length) {
-      const target = pick(infoUsers);
+    const notSpoken = oth.filter(p => !convSoFar.includes(`${p.name}:`));
+    if (notSpoken.length) {
+      const target = pick(notSpoken);
       parts.push(`${target.name}, 이번 밤에 뭘 조사했나? 결과를 공유해 달라.`);
     }
   }
@@ -711,11 +707,14 @@ function generateLocalDiscussion(players, bots, allChoices, round) {
     const questioned = aliveBots.filter(b => conversation.includes(b.p.name) && /결과를 말해|결과를 공유|뭘 조사|카드 썼나|공유해 달라/.test(conversation.split(b.p.name).pop()?.split("\n")[0] || ""));
     const others = aliveBots.filter(b => !questioned.includes(b)).sort(() => Math.random() - 0.5);
     const reactors = [...questioned, ...others].slice(0, Math.min(3, aliveBots.length));
+    const firstRoundIds = new Set(results.map(r => r.id));
     for (const bot of reactors) {
       const msg = localBotReact(bot, players, allChoices, round, conversation, claimedCards, results);
       if (msg && msg.length > 2) {
-        const claimed = extractClaimedCard(msg);
-        if (claimed) claimedCards.set(claimed.id, bot.p.id);
+        // 1차 발언과 같은 내용이면 스킵
+        const prev = results.find(r => r.id === bot.p.id);
+        if (prev && prev.msg === msg) continue;
+        // 2차에서는 카드 주장 중복 등록 안 함 (1차에서 이미 등록된 것만 유지)
         results.push({ id: bot.p.id, msg });
         conversation += `${bot.p.name}: "${msg}"\n`;
       }
@@ -2238,8 +2237,8 @@ export default function App() {
             {(() => {
               const disc = _roundDiscussions[round] || [];
               const claimedBy = {};
-              disc.forEach(d => { const c = extractClaimedCard(d.msg); if (c) { if (!claimedBy[c.id]) claimedBy[c.id] = []; claimedBy[c.id].push(d); } });
-              const dups = Object.entries(claimedBy).filter(([, arr]) => arr.length >= 2);
+              disc.forEach(d => { const c = extractClaimedCard(d.msg); if (c) { if (!claimedBy[c.id]) claimedBy[c.id] = []; if (!claimedBy[c.id].some(x => x.id === d.id)) claimedBy[c.id].push(d); } });
+              const dups = Object.entries(claimedBy).filter(([, arr]) => arr.length >= 2 && new Set(arr.map(a => a.id)).size >= 2);
               return dups.length > 0 && <div><div style={S.sub}>⚡ 모순 지적</div>
                 {dups.map(([cid, arr]) => <button key={cid} onClick={() => myDecl("free", 0, `${arr.map(d => d.name).join("과 ")}가 둘 다 ${cn(cid)}를 썼다고 했는데, 같은 라운드에 같은 카드는 불가능하다. 둘 중 하나가 거짓말이다`)} style={S.btnSm("#F97316")}>{arr.map(d => d.name).join(" vs ")} — {cn(cid)} 중복!</button>)}</div>;
             })()}
