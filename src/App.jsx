@@ -739,7 +739,12 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
 
   // 0. 누군가 나에게 질문했으면 답변
   const myName = bot.p.name;
-  const askedMe = convSoFar.includes(myName) && /결과를 말해|결과를 공유|뭘 조사|뭘 했|카드 썼나|공유해 달라/.test(convSoFar.split(myName).pop()?.split("\n")[0] || "");
+  // 다른 사람이 나에게 질문했는지 체크 (내 자신의 발언은 제외)
+  const convLines = convSoFar.split("\n").filter(l => l.trim());
+  const askedMe = convLines.some(line => {
+    if (line.startsWith(`${myName}:`)) return false; // 내 발언은 제외
+    return line.includes(myName) && /결과를 말해|결과를 공유|뭘 조사|뭘 했|카드 썼나|공유해 달라/.test(line);
+  });
   if (askedMe) {
     if (bot.p.faction === "guardian") {
       const newS = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
@@ -766,6 +771,20 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
         return `나는 ${cn(pick(available))}을 썼다.`;
       }
       return "나는 정보 카드를 썼다.";
+    }
+  }
+
+  // 0.5 교란 중복 감지 — 교란의 속삭임은 1명만 쓰는데 2명 이상이 "교란당했다" 주장
+  if (bot.p.faction === "guardian" && convSoFar) {
+    const disruptedClaims = [];
+    const lines = convSoFar.split("\n");
+    lines.forEach(line => {
+      const match = line.match(/^(P\d+).*교란당/);
+      if (match) disruptedClaims.push(match[1]);
+    });
+    const uniqueDisrupted = [...new Set(disruptedClaims)];
+    if (uniqueDisrupted.length >= 2 && !myPrevMsg.includes("교란")) {
+      return `${uniqueDisrupted.join("과 ")}가 둘 다 교란당했다고 했는데, 교란의 속삭임은 한 명만 쓸 수 있다. 둘 중 하나가 거짓말이다.`;
     }
   }
 
@@ -2300,6 +2319,15 @@ export default function App() {
                   arr.forEach(a => { if (!seenIds.has(a.id)) { seenIds.add(a.id); uniqueArr.push(a); } });
                   return <button key={cid} onClick={() => myDecl("free", 0, `${uniqueArr.map(d => d.name).join("과 ")}가 둘 다 ${cn(cid)}를 썼다고 했는데, 같은 라운드에 같은 카드는 불가능하다. 둘 중 하나가 거짓말이다`)} style={S.btnSm("#F97316")}>{uniqueArr.map(d => d.name).join(" vs ")} — {cn(cid)} 중복!</button>;
                 })}</div>;
+            })()}
+
+            {/* 교란 중복 모순 지적 */}
+            {(() => {
+              const disc = _roundDiscussions[round] || [];
+              const disruptedBy = [];
+              disc.forEach(d => { if (d.msg.includes("교란당") && !disruptedBy.some(x => x.id === d.id)) disruptedBy.push(d); });
+              return disruptedBy.length >= 2 && <div>
+                <button onClick={() => myDecl("free", 0, `${disruptedBy.map(d => d.name).join("과 ")}가 둘 다 교란당했다고 했는데, 교란의 속삭임은 한 명만 쓸 수 있다. 둘 중 하나가 거짓말이다`)} style={S.btnSm("#F97316")}>{disruptedBy.map(d => d.name).join(" vs ")} — 교란 중복!</button></div>;
             })()}
 
             {/* 일반 발언 */}
