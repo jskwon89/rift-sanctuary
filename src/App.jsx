@@ -369,12 +369,21 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   }
 
-  // 1.7 다른 봇에게 질문/정보 요청 — 아직 발언 안 한 사람에게만
-  if (!parts.length && convSoFar && personality === "analytical" && Math.random() < 0.4) {
-    const notSpoken = oth.filter(p => !convSoFar.includes(`${p.name}:`));
-    if (notSpoken.length) {
-      const target = pick(notSpoken);
-      parts.push(`${target.name}, 이번 밤에 뭘 조사했나? 결과를 공유해 달라.`);
+  // 1.7 자기 카드 먼저 밝히고 → 질문
+  if (!parts.length && myChoice) {
+    const myCardName = cn(myChoice.cid);
+    const myTgt = myChoice.tgt?.map(id => pn(players, id)).join(", ") || "";
+    const isInfo = CARDS.find(c => c.id === myChoice.cid)?.cat === "info";
+    if (!isInfo) {
+      parts.push(`나는 ${myCardName}${myTgt ? "으로 " + myTgt + "에게" : "을"} 썼다. 공유할 조사 결과가 없다.`);
+    }
+    // 자기 소개 후 질문 추가
+    if (convSoFar && personality === "analytical") {
+      const notSpoken = oth.filter(p => !convSoFar.includes(`${p.name}:`));
+      if (notSpoken.length && parts.length < 2) {
+        const target = pick(notSpoken);
+        parts.push(`${target.name}, 어떤 카드를 썼나?`);
+      }
     }
   }
 
@@ -795,17 +804,22 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
     }
   }
 
-  // 0.5 교란 중복 감지 — 교란의 속삭임은 1명만 쓰는데 2명 이상이 "교란당했다" 주장
+  // 0.5 "결과를 못 받았다" 중복 감지 (교란/빼앗김/기타)
   if (bot.p.faction === "guardian" && convSoFar) {
-    const disruptedClaims = [];
+    const noResultClaims = [];
     const lines = convSoFar.split("\n");
     lines.forEach(line => {
-      const match = line.match(/^(P\d+).*교란당/);
-      if (match) disruptedClaims.push(match[1]);
+      const match = line.match(/^"?(P\d+).*(?:교란당|결과를 못|빼앗)/);
+      if (match && !noResultClaims.includes(match[1])) noResultClaims.push(match[1]);
     });
-    const uniqueDisrupted = [...new Set(disruptedClaims)];
-    if (uniqueDisrupted.length >= 2 && !myPrevMsg.includes("교란")) {
-      return `${uniqueDisrupted.join("과 ")}가 둘 다 교란당했다고 했는데, 교란의 속삭임은 한 명만 쓸 수 있다. 둘 중 하나가 거짓말이다.`;
+    if (noResultClaims.length >= 2 && !myPrevMsg.includes("교란") && !myPrevMsg.includes("결과를 못")) {
+      // 교란만 2명이면 교란 중복, 교란+빼앗김이면 "결과 못 받은 사람이 많다"
+      const disruptedOnly = lines.filter(l => /교란당/.test(l)).map(l => l.match(/^"?(P\d+)/)?.[1]).filter(Boolean);
+      const uniqueDisrupted = [...new Set(disruptedOnly)];
+      if (uniqueDisrupted.length >= 2) {
+        return `${uniqueDisrupted.join("과 ")}가 둘 다 교란당했다고 했는데, 교란의 속삭임은 한 명만 쓸 수 있다. 둘 중 하나가 거짓말이다.`;
+      }
+      return `${noResultClaims.join("과 ")}가 모두 결과를 못 받았다고 했다. 이렇게 많은 사람이 동시에 결과를 못 받는 건 이상하다.`;
     }
   }
 
