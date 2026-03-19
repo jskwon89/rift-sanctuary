@@ -336,6 +336,29 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   }
 
+  // 1.55 추적자 결과 vs 카드 주장 모순 감지
+  if (parts.length < 2 && convSoFar) {
+    // 대화에서 "추적자의 눈으로 PX를 봤더니 [카드A]를 썼다" 찾기
+    const trackerPattern = /추적자의 눈으로 (P\d+)을 (?:확인|봤더니|봤는데).*?([가-힣]+의 [가-힣]+|[가-힣]+)을 썼다/g;
+    let tm;
+    while ((tm = trackerPattern.exec(convSoFar)) !== null) {
+      const trackedName = tm[1];
+      const trackedCard = tm[2];
+      // 그 사람이 다른 카드를 주장했는지 체크
+      const trackedPlayer = players.find(p => p.name === trackedName);
+      if (trackedPlayer) {
+        const theirClaim = (_roundDiscussions[round] || []).find(d => d.id === trackedPlayer.id);
+        if (theirClaim) {
+          const cl = extractClaimedCard(theirClaim.msg);
+          if (cl && cl.name !== trackedCard && !parts.some(p => p.includes(trackedName))) {
+            parts.push(`추적자 결과에 따르면 ${trackedName}은 ${trackedCard}을 썼는데, ${trackedName} 본인은 ${cl.name}을 썼다고 주장했다. 둘 중 하나가 거짓말이다.`);
+            break;
+          }
+        }
+      }
+    }
+  }
+
   // 1.6 상황 긴박감 반영
   if (situation === "critical" && !parts.length) {
     const confirmed = oth.filter(p => bot.kf[p.id] === "void");
@@ -497,18 +520,18 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
         }
       }
       if (!parts.length) {
-        const fillers = personality === "aggressive" ? [
-          "정보 없이 앉아있을 수 없다. 의심 가는 사람을 말해봐라.",
-          "누군가 분명히 숨기고 있다. 발언 안 한 사람이 수상하다.",
-        ] : personality === "analytical" ? [
-          "현재까지 정보가 부족하다. 각자 카드와 결과를 정리해 보자.",
-          "이번 라운드는 정보 수집에 집중하겠다.",
-        ] : [
-          "확실한 단서가 없다. 정보가 있으면 공유해 달라.",
-          "아직 판단하기 이르다. 좀 더 지켜보자.",
-          "다른 사람의 정보를 듣고 판단하겠다.",
-        ];
-        parts.push(pick(fillers));
+        // 자기 카드를 밝히면서 다른 사람에게 요청
+        const myCardName = myChoice ? cn(myChoice.cid) : null;
+        const myTgt = myChoice?.tgt?.map(id => pn(players, id)).join(", ") || "";
+        const isInfo = myChoice && CARDS.find(c => c.id === myChoice.cid)?.cat === "info";
+        if (myCardName && !isInfo) {
+          parts.push(`나는 ${myCardName}${myTgt ? "으로 " + myTgt + "에게" : "을"} 썼다. 공유할 조사 결과가 없다.`);
+        } else if (myCardName && isInfo) {
+          // 정보 카드인데 결과가 없음 → 교란/빼앗김
+          parts.push(`나는 ${myCardName}을 썼는데 결과를 못 받았다.`);
+        } else {
+          parts.push("아직 판단하기 이르다. 좀 더 지켜보자.");
+        }
       }
     }
   }
@@ -645,35 +668,33 @@ function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards
     }
   }
 
-  // === 전략 6: 수호자 프레이밍 — 발언 내용 기반 ===
+  // === 전략 6: 수호자 프레이밍 — 대화에서 빌미 찾기 ===
   if (nonTeam.length) {
-    // 아직 발언 안 한 사람 우선 / 발언했지만 정보 없는 사람
-    const notSpoken = nonTeam.filter(p => !convSoFar || !convSoFar.includes(p.name));
-    const spokeNoInfo = nonTeam.filter(p => convSoFar?.includes(p.name) && !convSoFar.includes(`${p.name}: "`) || (convSoFar?.includes(`${p.name}:`) && !/파편|눈|추적|미행|경계/.test(convSoFar.split(p.name).pop()?.split("\n")[0] || "")));
-    const target = notSpoken.length ? pick(notSpoken) : spokeNoInfo.length ? pick(spokeNoInfo) : pick(nonTeam);
-
-    if (personality === "aggressive") {
-      return pick([
-        `${target.name}이 수상하다. 추방하자.`,
-        `솔직히 ${target.name}이 공허 같다.`,
-        `${target.name}을 이번에 추방해야 한다.`,
-      ]);
-    } else if (personality === "analytical") {
-      return pick([
-        `${target.name}의 주장을 검증해 봐야 한다.`,
-        `${target.name}이 어떤 카드를 썼는지 확인이 필요하다.`,
-        `${target.name}을 좀 더 조사해 볼 필요가 있다.`,
-      ]);
-    } else {
-      return pick([
-        `${target.name}에 대해 좀 더 알아봐야 한다.`,
-        `${target.name}이 뭘 했는지 궁금하다.`,
-        `${target.name}을 조사해 봐야 한다고 생각한다.`,
-      ]);
+    // 1순위: 대화에서 전투 카드를 썼다고 지목된 사람 공격
+    if (convSoFar) {
+      const combatMentioned = nonTeam.find(p => {
+        const lines = convSoFar.split("\n");
+        return lines.some(l => l.includes(p.name) && /칼날|안개|교란|손길|사슬|전투/.test(l));
+      });
+      if (combatMentioned) {
+        return `${combatMentioned.name}이 전투 카드를 썼다는 얘기가 나왔다. ${combatMentioned.name}을 추방해야 한다.`;
+      }
+      // 2순위: 다른 사람이 의심한 사람에 가세
+      const suspTarget = nonTeam.find(p => convSoFar.split("\n").some(l => !l.startsWith(`${p.name}:`) && l.includes(p.name) && /의심|수상|공허/.test(l)));
+      if (suspTarget) {
+        return `동의한다. ${suspTarget.name}이 수상하다.`;
+      }
     }
+    // 3순위: 정보를 안 준 사람 지적
+    const notShared = nonTeam.filter(p => !convSoFar || !convSoFar.split("\n").some(l => l.startsWith(`${p.name}:`) && /파편|눈|추적|미행|경계/.test(l)));
+    if (notShared.length) {
+      const target = pick(notShared);
+      return `${target.name}은 아직 조사 결과를 안 말했다. ${target.name}, 어떤 카드를 썼나?`;
+    }
+    return `${pick(nonTeam).name}을 다음에 조사해 봐야 한다.`;
   }
 
-  return "정보가 부족하다. 각자 결과를 공유해 달라.";
+  return "각자 카드와 결과를 밝혀라.";
 }
 
 // 메인 로컬 토론 생성 함수
