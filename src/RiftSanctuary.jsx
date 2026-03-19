@@ -126,6 +126,11 @@ class Bot {
 let _currentModel = "claude-sonnet-4-5-20250929";
 let _apiKey = ""; // 사용자가 입력하는 API 키
 
+// 라운드별 토론 이력 (크로스라운드 추론용)
+let _roundDiscussions = {}; // { round: [{ id, name, msg }] }
+let _allRoundClaims = {};   // { round: { cardId: playerId } }
+let _eliminationHistory = []; // [{ round, name, faction, type:"추방"|"제거" }]
+
 async function callAPI(system, user) {
   if (!_apiKey) {
     console.error("API 키가 설정되지 않았습니다.");
@@ -171,6 +176,26 @@ function buildBotSystem(bot, players, allChoices, round) {
   });
   const myHistory = historyLines.length ? historyLines.join("\n") : "없음";
 
+  // 이전 라운드 토론 요약 (크로스라운드 추론)
+  const prevDiscLines = [];
+  for (let r = 1; r < round; r++) {
+    const disc = _roundDiscussions[r];
+    if (disc?.length) {
+      prevDiscLines.push(`[R${r} 토론]`);
+      disc.forEach(d => prevDiscLines.push(`  ${d.name}: "${d.msg}"`));
+    }
+    const claims = _allRoundClaims[r];
+    if (claims && Object.keys(claims).length) {
+      const claimList = Object.entries(claims).map(([cid, pid]) => `${pn(players, pid)}→${cn(cid)}`);
+      prevDiscLines.push(`  카드 주장: ${claimList.join(", ")}`);
+    }
+  }
+  const prevDiscSummary = prevDiscLines.length ? prevDiscLines.join("\n") : "";
+
+  // 제거/추방 이력
+  const elimLines = _eliminationHistory.map(e => `R${e.round}: ${e.name} ${e.type} (${e.faction})`);
+  const elimSummary = elimLines.length ? elimLines.join("\n") : "없음";
+
   // 수호자/공허 별 전용 규칙
   const factionRules = p.faction === "guardian"
     ? `[수호자 행동 규칙]
@@ -192,7 +217,12 @@ function buildBotSystem(bot, players, allChoices, round) {
 - 이전에 "믿는다"고 한 사람을 새로운 증거 없이 갑자기 의심하면 안 된다.
 
 ★ 의심의 근거:
-- 의심하려면 반드시 논리적 인과관계가 있어야 한다. "어쩐지 수상하다"식의 근거 없는 의심 금지.`
+- 의심하려면 반드시 논리적 인과관계가 있어야 한다. "어쩐지 수상하다"식의 근거 없는 의심 금지.
+
+★ 크로스라운드 추론 (매우 중요):
+- 위 "이전 라운드 토론 기록"을 보고, 이전 주장과 현재 주장이 모순되면 반드시 지적하라.
+- 예: R1에서 "예지의 파편으로 P3,P4를 봤는데 공허가 없다"고 한 사람이 R2에서 P3을 공허로 의심하면 모순이다.
+- 추방/제거된 플레이어의 진영 정보를 활용하여 다른 플레이어의 주장을 검증하라.`
     : `[공허 행동 규칙 — 중요!]
 너의 목표: 수호자들을 속이고 수호자를 추방시키는 것이다. 팀원(${bot.vt.filter(v => v !== p.id).map(id => pn(players, id)).join(", ")})은 절대 공격하지 마라.
 
@@ -207,7 +237,12 @@ function buildBotSystem(bot, players, allChoices, round) {
 - 다른 사람의 발언과 모순되는 거짓말도 위험하다. 예: P3이 "추적자의 눈으로 P4가 경계의 눈을 썼다"고 했는데, 네가 "미행의 눈으로 P4를 봤더니 지목 없음"이라 하면 → P4가 경계의 눈으로 누군가를 지목했을 텐데 "지목 없음"은 모순이라 들통난다.
 - 규칙상 불가능한 행동을 주장하면 안 된다 (예: 자기 자신을 예지의 파편 대상에 포함).
 - 이전 라운드 발언과 모순되면 안 된다.
-- 거짓말의 결과가 규칙상 유효해야 한다 (예: 예지의 파편 결과는 "있다" 또는 "없다"만 가능).`;
+- 거짓말의 결과가 규칙상 유효해야 한다 (예: 예지의 파편 결과는 "있다" 또는 "없다"만 가능).
+
+★ 크로스라운드 거짓말 전략:
+- 위 "이전 라운드 토론 기록"에서 네가 이전에 한 주장을 확인하고, 이번 주장이 이전과 모순되지 않게 하라.
+- 추방된 수호자의 진영이 밝혀졌다면, 그 정보를 역이용하라 (예: "봤더니 그 사람이 수호자였으니 내가 수호자인 증거다").
+- 누군가를 이전에 감싸줬다면 갑자기 의심하지 마라. 일관성이 깨지면 들통난다.`;
 
   return `너는 "성역의 균열" 게임의 ${p.name}이다. 현재 라운드 ${round}.
 ${p.faction === "void" ? `너는 공허다. 팀원: ${bot.vt.filter(v => v !== p.id).map(id => pn(players, id)).join(", ")}. 수호자들을 속여야 한다.` : "너는 수호자다. 공허를 찾아 추방해야 한다."}
@@ -218,6 +253,10 @@ ${myHistory}
 이번 밤 네가 실제 사용한 카드: ${myCard}${myTgt ? " → " + myTgt : ""}${disrupted ? " (교란당해 무효화됨)" : ""}
 네가 아는 조사 결과:
 ${secrets}
+
+제거/추방 이력:
+${elimSummary}
+${prevDiscSummary ? `\n이전 라운드 토론 기록 (다른 플레이어들이 한 주장 — 교차 검증에 활용하라):\n${prevDiscSummary}` : ""}
 
 게임 규칙:
 - 매 밤 12종 카드 중 1장을 드래프트. 중복 불가(같은 라운드에 같은 카드를 2명이 못 씀).
@@ -308,6 +347,19 @@ function validateSpeech(msg, bot, players, allChoices, round, claimedCards, conv
     issues.push("quiet_complaint");
   }
 
+  // 7. 크로스라운드: 수호자가 이전 라운드에서 한 주장과 모순 (예: "공허 없다"고 했는데 같은 사람 의심)
+  // (이 체크는 API 프롬프트에서 주로 처리하지만, 수호자 거짓 주장만 추가 체크)
+  if (bot.p.faction === "guardian" && claimed && myChoice) {
+    // 이전 라운드에서 같은 카드를 썼다고 주장했는지 체크 (다른 라운드의 중복은 허용)
+    for (let r = 1; r < round; r++) {
+      const prevClaims = _allRoundClaims[r];
+      if (prevClaims?.[claimed.id] === bot.p.id) {
+        // 같은 봇이 이전 라운드에서도 같은 카드를 주장 — 가능하므로 문제 없음
+        break;
+      }
+    }
+  }
+
   return issues;
 }
 
@@ -386,23 +438,27 @@ function fixSpeech(msg, issues, bot, players, allChoices, round, claimedCards) {
   return fixed;
 }
 
-// 개별 에이전트 순차 토론
+// 개별 에이전트 순차 토론 + 봇간 상호작용
 async function generateDiscussion(players, bots, allChoices, round, gameHistory, publicLog) {
   const aliveBots = players.filter(p => p.alive && p.id !== 0).map(p => bots[p.id]).filter(Boolean);
   if (!aliveBots.length) return [];
 
+  const elimInfo = _eliminationHistory.length
+    ? _eliminationHistory.map(e => `R${e.round}: ${e.name} ${e.type}(${e.faction})`).join(", ")
+    : "없음";
   const context = `라운드 ${round}. 생존: ${players.filter(p => p.alive).map(p => p.name).join(", ")}
 공개 결과: ${publicLog.length ? publicLog.join("; ") : "없음"}
+제거/추방 이력: ${elimInfo}
 이전: ${gameHistory.length ? gameHistory.join(" | ") : "첫 라운드"}`;
 
   const results = [];
   let conversation = "";
   const claimedCards = new Map(); // cardId -> playerId
 
-  // 좌석 순서대로 1명씩 API 호출
+  // ── 1차: 좌석 순서대로 정보 공유 ──
   for (const bot of aliveBots) {
     const system = buildBotSystem(bot, players, allChoices, round);
-    const hasInfo = bot.secrets.some(s => s.result && s.result !== "unknown" && s.result !== "disrupted");
+    const hasInfo = bot.secrets.some(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted");
     const user = `${context}
 ${conversation ? `지금까지 다른 플레이어들의 발언:\n${conversation}` : "아직 아무도 발언하지 않았다."}
 
@@ -415,30 +471,67 @@ ${bot.p.faction === "void" ? "(★ 너는 공허다. 패스하지 마라. 가짜
       const text = await callAPI(system, user);
       let clean = text.trim().replace(/^["']|["']$/g, "").replace(/^[A-Z]\d+:\s*/i, "");
       if (clean && !clean.includes("패스") && clean.length > 2) {
-        // ═══ 후처리 검증 ═══
         const issues = validateSpeech(clean, bot, players, allChoices, round, claimedCards, conversation);
         if (issues.length > 0) {
           console.log(`[검증] ${bot.p.name}(${bot.p.faction}) 문제 발견:`, issues.join(", "), "→ 수정");
           clean = fixSpeech(clean, issues, bot, players, allChoices, round, claimedCards);
         }
-        // 카드 주장 기록
         const claimed = extractClaimedCard(clean);
         if (claimed) claimedCards.set(claimed.id, bot.p.id);
-
         results.push({ id: bot.p.id, msg: clean });
         conversation += `${bot.p.name}: "${clean}"\n`;
       }
     } catch {}
   }
+
+  // ── 2차: 봇 간 반박/동조 라운드 (1차 발언이 2개 이상일 때) ──
+  if (results.length >= 2) {
+    // 발언한 봇들 중 랜덤 순서로 최대 3명이 반응
+    const reactors = [...aliveBots].sort(() => Math.random() - 0.5).slice(0, Math.min(3, aliveBots.length));
+    for (const bot of reactors) {
+      const system = buildBotSystem(bot, players, allChoices, round);
+      const user = `${context}
+지금까지의 토론:\n${conversation}
+
+다른 플레이어들의 발언을 들었다. 이제 반응할 차례다.
+- 다른 발언에서 모순을 발견했으면 지적하라.
+- 누군가의 주장을 지지하거나 반박할 근거가 있으면 말해라.
+- 이전 라운드 주장과 모순되는 점이 있으면 지적하라.
+- 특별히 할 말이 없으면 "패스"라고만 해라.
+${bot.p.faction === "void" ? "(★ 공허: 수호자 간 의심을 부추기거나, 팀원 방어, 또는 다른 사람을 공격하라. 패스하지 마라.)" : ""}
+1문장으로 답해라. 따옴표나 이름 태그 없이 말만.`;
+
+      try {
+        const text = await callAPI(system, user);
+        let clean = text.trim().replace(/^["']|["']$/g, "").replace(/^[A-Z]\d+:\s*/i, "");
+        if (clean && !clean.includes("패스") && clean.length > 2) {
+          const issues = validateSpeech(clean, bot, players, allChoices, round, claimedCards, conversation);
+          if (issues.length > 0) {
+            clean = fixSpeech(clean, issues, bot, players, allChoices, round, claimedCards);
+          }
+          const claimed = extractClaimedCard(clean);
+          if (claimed) claimedCards.set(claimed.id, bot.p.id);
+          results.push({ id: bot.p.id, msg: clean });
+          conversation += `${bot.p.name}: "${clean}"\n`;
+        }
+      } catch {}
+    }
+  }
+
+  // 이번 라운드 토론 이력 저장
+  _roundDiscussions[round] = results.map(r => ({ id: r.id, name: players.find(p => p.id === r.id)?.name || `P${r.id+1}`, msg: r.msg }));
+  _allRoundClaims[round] = Object.fromEntries(claimedCards);
+
   return results;
 }
 
-// 개별 에이전트 반응 (병렬 호출 후 필터)
+// 개별 에이전트 반응 (병렬 호출 후 필터 + 검증)
 async function generateReactions(players, bots, playerMsg, allChoices, round, conversationSoFar) {
   const aliveBots = Object.values(bots).filter(b => b.p.alive);
   if (!aliveBots.length) return [];
 
   const conv = conversationSoFar ? conversationSoFar + `P1: "${playerMsg}"\n` : `P1: "${playerMsg}"\n`;
+  const currentClaims = _allRoundClaims[round] ? new Map(Object.entries(_allRoundClaims[round])) : new Map();
 
   // 병렬 호출
   const promises = aliveBots.map(async (bot) => {
@@ -448,17 +541,30 @@ P1이 방금 위와 같이 발언했다. 너(${bot.p.name})는 이 발언에 반
 - P1이 너에게 질문했다면 (예: "왜 의심?", "근거가 뭐야?", "어떤 카드 썼어?") 반드시 답해라. 질문을 무시하면 안 된다.
 - P1이 너를 의심하거나 언급했다면 방어하거나 반박해라.
 - P1이 다른 사람을 의심했다면, 관련 정보가 있으면 동조하거나 반박해라.
+- 이전 라운드의 주장과 모순되는 점을 발견했으면 지적해라.
 - 정말 아무 관련이 없으면 "패스"라고만 해라.
 1문장으로 답해라. 따옴표나 이름 태그 없이 말만.`;
     try {
       const text = await callAPI(system, user);
-      const clean = text.trim().replace(/^["']|["']$/g, "").replace(/^[A-Z]\d+:\s*/i, "");
-      if (clean && !clean.includes("패스") && clean.length > 2) return { id: bot.p.id, msg: clean };
+      let clean = text.trim().replace(/^["']|["']$/g, "").replace(/^[A-Z]\d+:\s*/i, "");
+      if (clean && !clean.includes("패스") && clean.length > 2) {
+        // 반응에도 검증 적용
+        const issues = validateSpeech(clean, bot, players, allChoices, round, currentClaims, conv);
+        if (issues.length > 0) {
+          console.log(`[반응검증] ${bot.p.name}(${bot.p.faction}) 문제:`, issues.join(", "), "→ 수정");
+          clean = fixSpeech(clean, issues, bot, players, allChoices, round, currentClaims);
+        }
+        const claimed = extractClaimedCard(clean);
+        if (claimed) currentClaims.set(claimed.id, bot.p.id);
+        return { id: bot.p.id, msg: clean };
+      }
     } catch {}
     return null;
   });
 
   const all = await Promise.all(promises);
+  // 반응에서 새로 주장된 카드를 전역에 반영
+  _allRoundClaims[round] = Object.fromEntries(currentClaims);
   return all.filter(Boolean);
 }
 
@@ -633,6 +739,7 @@ export default function App() {
     const nb = {}, vids = ps.filter(p => p.faction === "void").map(p => p.id);
     ps.forEach(p => { if (p.id !== HID) { const b = new Bot(p); if (p.faction === "void") b.initV(vids); nb[p.id] = b; } });
     setPlayers(ps); setBots(nb); setRound(1); setSecrets([]); setGameHistory([]); setConvLog("");
+    _roundDiscussions = {}; _allRoundClaims = {}; _eliminationHistory = [];
     const h = ps[HID], vm = h.faction === "void" ? ps.filter(p => p.faction === "void" && p.id !== HID).map(p => p.name).join(", ") : null;
     setLog([`🎮 ${n}인 (수호자 ${ng} / 공허 ${nv})`, `당신은 ${h.name} — ${h.faction === "guardian" ? "🛡️ 수호자" : "🌑 공허"}`, ...(vm ? [`🌑 공허 팀원: ${vm}`] : []), `\n━━━ 라운드 1 · 밤 ━━━`, `🔒 첫 밤: 칼날/방패/사슬/망자의 기억 사용 불가`]);
     doNightDraft(ps, nb, 1);
@@ -705,7 +812,7 @@ export default function App() {
     const R = nightProc(ps, ch);
     R.disr.forEach(pid => { const d = allDraft.find(c => c.pid === pid); if (d) d.wasDisrupted = true; });
 
-    R.killed.forEach(k => { const p = ps.find(x => x.id === k); if (p) { p.alive = false; p.ghost = true; } });
+    R.killed.forEach(k => { const p = ps.find(x => x.id === k); if (p) { p.alive = false; p.ghost = true; _eliminationHistory.push({ round: rnd, name: p.name, faction: "비공개", type: "제거" }); } });
     R.chained.forEach(({ id, r }) => { const p = ps.find(x => x.id === id); if (p) { p.chained = true; p.chainRounds = r; } });
     ch.forEach(c => { const p = ps.find(x => x.id === c.pid); if (p) p.actionHistory.push({ round: rnd, cat: CARDS.find(x => x.id === c.cid).cat }); });
     setPlayers([...ps]);
@@ -819,11 +926,14 @@ export default function App() {
     addL(`🗣️ 당신: "${msg}"`);
     setDc(p => p + 1);
     const currentConv = convLog + `P1: "${msg}"\n`;
+    // 플레이어 발언도 라운드 이력에 기록
+    if (!_roundDiscussions[round]) _roundDiscussions[round] = [];
+    _roundDiscussions[round].push({ id: 0, name: "P1", msg });
     setLoading(true);
     try {
       const rx = await generateReactions(players, bots, msg, allChoicesRef, round, currentConv);
       let newConv = currentConv;
-      rx.forEach(r => { const sp = players.find(p => p.id === r.id); if (sp?.alive) { addL(`  💬 ${sp.name}: "${r.msg}"`); newConv += `${sp.name}: "${r.msg}"\n`; } });
+      rx.forEach(r => { const sp = players.find(p => p.id === r.id); if (sp?.alive) { addL(`  💬 ${sp.name}: "${r.msg}"`); newConv += `${sp.name}: "${r.msg}"\n`; _roundDiscussions[round].push({ id: r.id, name: sp.name, msg: r.msg }); } });
       if (!rx.length) addL("  💭 반응 없음");
       setConvLog(newConv);
     } catch { addL("  💭 반응 없음"); }
@@ -905,7 +1015,7 @@ export default function App() {
     const isH = false;
     let exiled = [top[0]];
     const summ = [];
-    exiled.forEach(eid => { const p = ps.find(x => x.id === eid); if (p) { p.alive = false; p.ghost = true; const fs = isH ? "비공개" : (p.faction === "guardian" ? "수호자" : "공허"); addL(`🗳️ ${p.name} 추방 (${fs})`); summ.push(`${p.name} 추방(${fs})`); if (!isH) Object.values(bots).forEach(b => b.recE(p.id, p.faction)); } });
+    exiled.forEach(eid => { const p = ps.find(x => x.id === eid); if (p) { p.alive = false; p.ghost = true; const fs = isH ? "비공개" : (p.faction === "guardian" ? "수호자" : "공허"); addL(`🗳️ ${p.name} 추방 (${fs})`); summ.push(`${p.name} 추방(${fs})`); if (!isH) { Object.values(bots).forEach(b => b.recE(p.id, p.faction)); _eliminationHistory.push({ round: rnd, name: p.name, faction: fs, type: "추방" }); } } });
     setPlayers([...ps]);
     setGameHistory(prev => [...prev, `R${rnd}: ${summ.join(", ") || "추방없음"}`]);
 
@@ -1168,7 +1278,7 @@ export default function App() {
             <h2 style={{ fontSize: 20, fontWeight: 900, margin: "0 0 4px", color: victory.w === "guardian" ? "#93C5FD" : "#FCA5A5" }}>{victory.w === "guardian" ? "수호자 승리" : "공허 승리"}</h2>
             <p style={{ color: "#94A3B8", fontSize: 13, margin: "0 0 10px" }}>{victory.r}</p>
             <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: 10, marginBottom: 12, textAlign: "left" }}>{players.map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 13 }}><span>{p.name}{p.id === HID ? " ★" : ""}</span><span style={{ color: p.faction === "guardian" ? "#60A5FA" : "#F87171" }}>{p.faction === "guardian" ? "수호자" : "공허"} {p.alive ? "✓" : "💀"}</span></div>)}</div>
-            <button onClick={() => { setPhase("setup"); setPlayers([]); setLog([]); setSecrets([]); setGameHistory([]); setConvLog(""); }} style={{ ...S.btn("#3B82F6"), textAlign: "center" }}>새 게임</button>
+            <button onClick={() => { setPhase("setup"); setPlayers([]); setLog([]); setSecrets([]); setGameHistory([]); setConvLog(""); _roundDiscussions = {}; _allRoundClaims = {}; _eliminationHistory = []; }} style={{ ...S.btn("#3B82F6"), textAlign: "center" }}>새 게임</button>
           </div>
         </div>}
       </div>
