@@ -2063,7 +2063,7 @@ export default function App() {
         </div>}
 
         {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 20px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-          <div style={{ fontSize: 11, letterSpacing: 6, color: "#475569", marginBottom: 20 }}>RIFT OF THE SANCTUARY</div>
+          <div style={{ fontSize: 11, letterSpacing: 6, color: "#475569", marginBottom: 20, marginTop: 40 }}>RIFT OF THE SANCTUARY</div>
           <h1 style={{ fontSize: 30, fontWeight: 900, margin: "0 0 16px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
           <p style={{ color: "#475569", margin: "0 0 40px", fontSize: 13 }}>1인 vs AI · 프로토타입</p>
 
