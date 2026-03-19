@@ -208,6 +208,24 @@ function getVoidPrevClaims(botId, round) {
   return prevClaims;
 }
 
+// 봇 성격 (id 기반 고정 — 매 게임 일관)
+function getBotPersonality(botId) {
+  const types = ["aggressive", "cautious", "analytical"];
+  return types[botId % types.length];
+}
+
+// 게임 상황 판단
+function getGameSituation(players) {
+  const alive = players.filter(p => p.alive);
+  const voids = alive.filter(p => p.faction === "void").length;
+  const guards = alive.filter(p => p.faction === "guardian").length;
+  const total = alive.length;
+  if (voids >= guards - 1) return "critical"; // 공허가 거의 이김
+  if (total <= 4) return "endgame";            // 소수 생존
+  if (guards <= voids + 1) return "tense";     // 팽팽
+  return "normal";
+}
+
 // 수호자 정보 카드 결과를 자연어로 변환
 function describeSecret(s, players) {
   if (!s || !s.result || s.result === "unknown" || s.result === "disrupted" || s.result === "stolen") return null;
@@ -245,6 +263,8 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
   const disrupted = bot.secrets.filter(s => s.round === round && s.result === "disrupted");
   const newSecrets = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
   const oth = players.filter(p => p.alive && p.id !== bot.p.id);
+  const personality = getBotPersonality(bot.p.id);
+  const situation = getGameSituation(players);
 
   const parts = [];
 
@@ -253,26 +273,64 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     const s = newSecrets[0];
     const desc = describeSecret(s, players);
     if (desc) {
-      // 카드 중복 체크
-      const claimed = extractClaimedCard(desc);
-      if (!claimed || !claimedCards.has(claimed.id) || claimedCards.get(claimed.id) === bot.p.id) {
-        parts.push(desc);
+      parts.push(desc);
+    }
+    // 추적자로 의심스러운 카드를 본 경우 — 성격별 반응
+    if (s.card === "tracker_eye" && ["abyssal_blade", "fog_veil", "disruption", "abyssal_touch", "specter_chain"].includes(s.result)) {
+      const tName = pn(players, s.target);
+      if (personality === "aggressive") {
+        parts.push(`${tName}이 ${cn(s.result)}을 썼다. 공허가 확실하다. 바로 추방하자.`);
+      } else if (personality === "analytical") {
+        parts.push(`${tName}이 전투 카드를 쓴 건 의심스럽지만, 수호자도 전투 카드를 쓸 수 있다. 다른 증거도 필요하다.`);
       } else {
-        // 중복 → 결과만 다른 표현으로
-        parts.push(desc);
+        parts.push(`${tName}이 전투/방해 카드를 썼다. 주의해야 한다.`);
       }
     }
-    // 추적자로 의심스러운 카드를 본 경우 추가 코멘트
-    if (s.card === "tracker_eye" && ["abyssal_blade", "fog_veil", "disruption", "abyssal_touch", "specter_chain"].includes(s.result)) {
-      parts.push(`${pn(players, s.target)}이 전투/방해 카드를 썼다. 의심스럽다.`);
-    }
-    // 예지의 파편으로 공허 있다 → 주의 환기
+    // 예지의 파편으로 공허 있다 → 상황별 반응
     if (s.card === "prophecy_shard" && s.result === "void_present") {
       const names = (s.targets || []).map(t => pn(players, t)).join(", ");
-      parts.push(`${names} 중 공허가 있으니 주의해라.`);
+      if (situation === "critical" || situation === "endgame") {
+        parts.push(`${names} 중 공허가 있다. 지금 실수하면 진다. 신중하게 골라야 한다.`);
+      } else {
+        parts.push(`${names} 중 공허가 있으니 주의해라.`);
+      }
+    }
+    // 파수꾼의 눈 "다르다" → 추가 분석
+    if (s.card === "sentinel_eye" && s.result === "different") {
+      const names = (s.targets || []).map(t => pn(players, t));
+      if (names.length === 2) {
+        parts.push(`${names[0]}과 ${names[1]} 중 한 명이 공허다. 다른 정보와 교차해서 확인해야 한다.`);
+      }
     }
   } else if (disrupted.length > 0) {
-    parts.push("교란당해서 결과를 못 받았다. 누가 교란한 건지 모르겠다.");
+    if (personality === "aggressive") {
+      parts.push("교란당했다. 교란한 놈이 공허다. 누가 교란의 속삭임을 썼는지 추적해야 한다.");
+    } else {
+      parts.push("교란당해서 결과를 못 받았다. 누가 교란한 건지 모르겠다.");
+    }
+  }
+
+  // 1.5 상황 긴박감 반영
+  if (situation === "critical" && !parts.length) {
+    const confirmed = oth.filter(p => bot.kf[p.id] === "void");
+    if (confirmed.length) {
+      parts.push(`위험하다! ${confirmed[0].name}은 확정 공허다. 반드시 이번에 추방해야 진다.`);
+    } else {
+      parts.push("상황이 위험하다. 이번 투표가 중요하다. 확실한 정보를 공유해라.");
+    }
+  }
+
+  // 1.7 다른 봇에게 질문/정보 요청
+  if (!parts.length && convSoFar && personality === "analytical" && Math.random() < 0.4) {
+    // 아직 발언 안 한 정보 카드 사용자에게 질문
+    const infoUsers = oth.filter(p => {
+      const ch = allChoices.find(c => c.pid === p.id);
+      return ch && CARDS.find(c => c.id === ch.cid)?.cat === "info";
+    });
+    if (infoUsers.length) {
+      const target = pick(infoUsers);
+      parts.push(`${target.name}, 이번 밤에 뭘 조사했나? 결과를 공유해 달라.`);
+    }
   }
 
   // 2. 크로스라운드 모순 지적 (R2+)
@@ -358,7 +416,7 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   }
 
-  // 5. 할 말이 없으면
+  // 5. 할 말이 없으면 — 성격/상황별 다양화
   if (!parts.length) {
     if (oth.length) {
       // R2+ 에서는 이전 라운드 정보 언급
@@ -367,17 +425,33 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
         if (oldS.length) {
           const s = pick(oldS);
           const desc = describeSecret(s, players);
-          if (desc) {
-            parts.push(`R${s.round}에서 ${desc} 참고해 달라.`);
+          if (desc) parts.push(`R${s.round}에서 ${desc} 참고해 달라.`);
+        }
+      }
+      // 대화에서 언급된 내용에 반응
+      if (!parts.length && convSoFar) {
+        const suspMentioned = oth.find(p => convSoFar.includes(p.name) && /의심|수상|공허/.test(convSoFar));
+        if (suspMentioned) {
+          if (bot.kf[suspMentioned.id] === "guardian") {
+            parts.push(`${suspMentioned.name}은 내가 아는 한 수호자다. 다른 사람을 보자.`);
+          } else if (bot.gs(suspMentioned.id) > 0) {
+            parts.push(`${suspMentioned.name}에 대해서는 나도 좀 신경이 쓰인다.`);
           }
         }
       }
       if (!parts.length) {
-        parts.push(pick([
+        const fillers = personality === "aggressive" ? [
+          "정보 없이 앉아있을 수 없다. 의심 가는 사람을 말해봐라.",
+          "누군가 분명히 숨기고 있다. 발언 안 한 사람이 수상하다.",
+        ] : personality === "analytical" ? [
+          "현재까지 정보가 부족하다. 각자 카드와 결과를 정리해 보자.",
+          "이번 라운드는 정보 수집에 집중하겠다.",
+        ] : [
           "확실한 단서가 없다. 정보가 있으면 공유해 달라.",
           "아직 판단하기 이르다. 좀 더 지켜보자.",
           "이번 라운드 조사 결과가 없다. 다른 사람의 정보를 듣겠다.",
-        ]));
+        ];
+        parts.push(pick(fillers));
       }
     }
   }
@@ -392,9 +466,21 @@ function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards
   const nonTeam = oth.filter(p => !bot.vt.includes(p.id));
   const team = oth.filter(p => bot.vt.includes(p.id) && p.alive);
   if (!nonTeam.length) return null;
+  const personality = getBotPersonality(bot.p.id);
+  const situation = getGameSituation(players);
 
   // 이미 주장된 카드 수집
   const usedCards = new Set(claimedCards.keys());
+
+  // === 긴급 상황: 거의 이기는 중 ===
+  if (situation === "critical") {
+    // 공허가 거의 이기고 있으면 적극적으로 수호자 추방 유도
+    const target = pick(nonTeam);
+    return pick([
+      `${target.name}이 공허가 확실하다. 이번에 추방하지 않으면 늦는다.`,
+      `시간이 없다. ${target.name}을 추방해야 한다. 나를 믿어라.`,
+    ]);
+  }
 
   // 팀원이 의심받고 있나?
   const teamUnderFire = team.length > 0 && convSoFar &&
@@ -502,17 +588,31 @@ function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards
     }
   }
 
-  // === 전략 3: 수호자 프레이밍 ===
+  // === 전략 6: 수호자 프레이밍 — 성격별 ===
   if (nonTeam.length) {
     const target = pick(nonTeam);
-    return pick([
-      `${target.name}의 행동이 좀 이상하다. 다들 주의해라.`,
-      `${target.name}이 정보를 안 주고 있다. 뭘 숨기는 거 아닌가?`,
-      `${target.name}을 조사해 봐야 한다고 생각한다.`,
-    ]);
+    if (personality === "aggressive") {
+      return pick([
+        `${target.name}이 수상하다. 유용한 정보를 하나도 안 줬다.`,
+        `${target.name}을 이번에 추방하자. 더 기다릴 이유가 없다.`,
+        `솔직히 ${target.name}이 공허 같다. 행동 패턴이 이상하다.`,
+      ]);
+    } else if (personality === "analytical") {
+      return pick([
+        `${target.name}의 주장을 정리해 보면 앞뒤가 안 맞는 부분이 있다.`,
+        `${target.name}이 사용했다는 카드와 결과를 다시 검증해 봐야 한다.`,
+        `${target.name}을 좀 더 조사해 볼 필요가 있다.`,
+      ]);
+    } else {
+      return pick([
+        `${target.name}의 행동이 좀 이상하다. 다들 주의해라.`,
+        `${target.name}이 정보를 안 주고 있다. 뭘 숨기는 거 아닌가?`,
+        `${target.name}을 조사해 봐야 한다고 생각한다.`,
+      ]);
+    }
   }
 
-  return "아직 판단하기 이르다.";
+  return "정보가 부족하다. 각자 결과를 공유해 달라.";
 }
 
 // 메인 로컬 토론 생성 함수
@@ -565,6 +665,8 @@ function generateLocalDiscussion(players, bots, allChoices, round) {
 function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards, prevStatements) {
   const oth = players.filter(p => p.alive && p.id !== bot.p.id);
   if (!oth.length || !convSoFar) return null;
+  const personality = getBotPersonality(bot.p.id);
+  const situation = getGameSituation(players);
 
   // 1. 카드 중복 감지 (모순 지적)
   const cardMentions = {};
@@ -623,8 +725,20 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
     if (topSusp.length && Math.random() < 0.5) {
       const s = topSusp[0];
       if (convSoFar.includes(s.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
-        return `동의한다. ${s.name}에 대한 의심이 맞다고 본다.`;
+        if (personality === "aggressive") {
+          return `${s.name}을 이번에 무조건 추방해야 한다. 더 놔두면 위험하다.`;
+        } else if (personality === "analytical") {
+          const ev = bot.secrets.find(sec => (sec.targets?.includes(s.id) || sec.target === s.id) && sec.result && sec.result !== "unknown");
+          return ev ? `동의한다. 내 R${ev.round} 조사 결과도 ${s.name}을 가리킨다.` : `동의한다. ${s.name}에 대한 의심이 맞다고 본다.`;
+        }
+        return `동의한다. ${s.name}이 의심스럽다.`;
       }
+    }
+
+    // 긴급: 아무도 안 찍히면 경고
+    if (situation === "critical" || situation === "endgame") {
+      const confirmed = oth.filter(p => bot.kf[p.id] === "void");
+      if (confirmed.length) return `이번이 마지막 기회다. ${confirmed[0].name}을 반드시 추방해야 한다!`;
     }
   }
 
@@ -651,10 +765,20 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
     for (const nt of nonTeam) {
       if (convSoFar.includes(nt.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
         if (Math.random() < 0.5) {
+          if (personality === "aggressive") {
+            return pick([
+              `맞다. ${nt.name}이 공허다. 바로 추방하자.`,
+              `${nt.name}을 왜 아직도 놔두고 있나? 추방해야 한다.`,
+            ]);
+          } else if (personality === "analytical") {
+            return pick([
+              `${nt.name}에 대해 나도 비슷하게 느꼈다. 행동 패턴이 일관성이 없다.`,
+              `${nt.name}의 주장을 다시 보면 모순이 있다고 본다.`,
+            ]);
+          }
           return pick([
             `맞다. ${nt.name}이 수상하다. 이번에 추방하자.`,
             `${nt.name}에 대해 나도 비슷하게 느꼈다.`,
-            `${nt.name}이 정보를 안 주는 게 이상하지 않나?`,
           ]);
         }
       }
@@ -663,7 +787,13 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
     for (const tm of team) {
       if (convSoFar.includes(tm.name) && (convSoFar.includes("의심") || convSoFar.includes("공허"))) {
         const redirect = pick(nonTeam);
-        if (redirect) return `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나? 증거를 보자.`;
+        if (redirect) {
+          return pick([
+            `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나?`,
+            `${tm.name}을 의심하는 건 공허의 함정이다. ${redirect.name}을 봐라.`,
+            `잠깐, ${tm.name}은 유용한 정보를 줬다. 오히려 ${redirect.name}이 아무 정보도 안 줬다.`,
+          ]);
+        }
       }
     }
 
@@ -672,8 +802,14 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
       const elim = pick(_eliminationHistory);
       if (elim.faction === "수호자") {
         const target = pick(nonTeam);
-        if (target) return `${elim.name}은 수호자였는데 추방됐다. 진짜 공허는 ${target.name} 같은 사람 아닌가?`;
+        if (target) return `${elim.name}은 수호자였는데 추방당했다. 그걸 유도한 사람이 진짜 공허 아닌가? ${target.name}을 보자.`;
       }
+    }
+
+    // 엔드게임: 수호자 아군인 척
+    if (situation === "endgame" || situation === "critical") {
+      const target = pick(nonTeam);
+      return `이번 투표를 틀리면 진다. ${target.name}을 추방해야 한다. 나를 믿어라.`;
     }
   }
 
@@ -698,6 +834,8 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
     const askedQuestion = /\?|카드|뭐|왜|어떤|근거|증거/.test(playerMsg) && mentionedMe;
     const suspectedMe = mentionedMe && /의심|수상|공허|거짓/.test(playerMsg);
 
+    const personality = getBotPersonality(bot.p.id);
+
     if (askedQuestion) {
       // 질문에 답변
       if (bot.p.faction === "guardian") {
@@ -710,25 +848,52 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
           if (desc) msg = desc;
         }
       } else {
-        // 공허: 거짓으로 방어
-        msg = pick([
-          "나는 정보 카드를 썼고 결과도 공유했다. 의심할 이유가 없다.",
-          "질문 의도를 모르겠다. 나는 떳떳하다.",
-        ]);
+        // 공허: 거짓으로 방어 — 이전 거짓말과 일관되게
+        const prevClaims = getVoidPrevClaims(bot.p.id, round + 1);
+        if (prevClaims.length) {
+          const pc = prevClaims[prevClaims.length - 1];
+          msg = `이미 말했듯이 나는 ${pc.card.name}을 썼다. 결과도 공유했다.`;
+        } else {
+          msg = pick([
+            "나는 정보 카드를 썼고 결과도 공유했다. 의심할 이유가 없다.",
+            "질문 의도를 모르겠다. 나는 떳떳하다.",
+            "내가 공유한 정보가 틀렸다는 증거를 대라.",
+          ]);
+        }
       }
     } else if (suspectedMe) {
-      // 의심에 대한 방어
+      // 의심에 대한 방어 — 성격별
       if (bot.p.faction === "guardian") {
-        msg = pick([
-          "나는 수호자다. 조사 결과를 봐라.",
-          "내가 공유한 정보가 거짓이라고 생각하나? 근거를 대라.",
-        ]);
+        if (personality === "aggressive") {
+          msg = pick([
+            "나를 의심하면 공허만 좋다. 진짜 적을 찾아라.",
+            "나는 수호자다. 나를 의심할 근거가 뭔데?",
+          ]);
+        } else if (personality === "analytical") {
+          const ev = bot.secrets.filter(s => s.result && s.result !== "unknown" && s.result !== "disrupted");
+          msg = ev.length
+            ? `내가 R${ev[0].round}에서 공유한 정보를 봐라. 공허가 이런 정확한 정보를 줄 수 있나?`
+            : "나는 수호자다. 조사 결과로 판단해 달라.";
+        } else {
+          msg = pick([
+            "나는 수호자다. 조사 결과를 봐라.",
+            "내가 공유한 정보가 거짓이라고 생각하나? 근거를 대라.",
+          ]);
+        }
       } else {
-        msg = pick([
-          "근거 없이 의심하지 마라. 나는 수호자다.",
-          "나를 의심할 시간에 진짜 공허를 찾아라.",
-          "내 조사 결과를 봐라. 공허가 이런 정보를 줄 수 있겠나?",
-        ]);
+        if (personality === "aggressive") {
+          const nonTeam = oth.filter(p => !bot.vt.includes(p.id));
+          const redirect = nonTeam.length ? pick(nonTeam) : null;
+          msg = redirect
+            ? `나를 의심하는 건 시간 낭비다. ${redirect.name}을 봐라.`
+            : "근거 없는 의심이다. 진짜 공허를 찾아라.";
+        } else {
+          msg = pick([
+            "근거 없이 의심하지 마라. 나는 수호자다.",
+            "나를 의심할 시간에 진짜 공허를 찾아라.",
+            "내 조사 결과를 봐라. 공허가 이런 정보를 줄 수 있겠나?",
+          ]);
+        }
       }
     } else {
       // 일반 반응: 다른 사람에 대한 언급에 반응
