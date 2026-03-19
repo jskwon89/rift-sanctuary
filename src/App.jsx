@@ -753,10 +753,19 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
         return isInfo ? "교란당해서 결과를 못 받았다." : `나는 ${cn(myChoice.cid)}을 썼다. 정보 카드가 아니라 공유할 조사 결과가 없다.`;
       }
     } else {
-      // 공허: 이미 거짓말한 게 있으면 반복, 없으면 새로 만듦
+      // 공허: 질문에 거짓 답변
       const myStmt = prevStatements?.find(s => s.id === bot.p.id);
-      if (myStmt) return `이미 말했다. ${myStmt.msg}`;
-      return "나는 정보 카드를 썼고 결과도 공유했다.";
+      if (myStmt && extractClaimedCard(myStmt.msg)) {
+        const cl = extractClaimedCard(myStmt.msg);
+        return `나는 ${cl.name}을 썼다. 앞에서 결과를 말했다.`;
+      }
+      // 1차에서 카드 주장 안 했으면 새로 만들기
+      const usedCards = new Set(Object.keys(_allRoundClaims[round] || {}));
+      const available = ["prophecy_shard","sentinel_eye","tracker_eye","shadow_eye","vigilant_eye"].filter(id => !usedCards.has(id));
+      if (available.length) {
+        return `나는 ${cn(pick(available))}을 썼다.`;
+      }
+      return "나는 정보 카드를 썼다.";
     }
   }
 
@@ -2240,9 +2249,23 @@ export default function App() {
         {phase === "discuss" && !loading && <div style={S.pnl}>
           <div style={{ fontSize: 12, color: "#F59E0B", marginBottom: 4, textAlign: "center" }}>☀️ 토론 ({dc}/3)</div>
           {dc < 3 && <>
-            {/* 조사 결과 공유 (진실) */}
-            {recentSecrets.length > 0 && <div><div style={S.sub}>📋 조사 결과 공유</div>
-              {recentSecrets.map((s, i) => <button key={`s${i}`} onClick={() => myDecl("free", 0, s.msg)} style={S.btnSm("#8B5CF6")}>{s.msg}</button>)}</div>}
+            {/* 조사 결과 공유 (진실) / 빼앗김·교란 알리기 */}
+            {(() => {
+              const stolenOrDisrupted = secrets.filter(s => s.round === round && (s.result === "stolen" || s.result === "disrupted"));
+              const hasResults = recentSecrets.length > 0;
+              const hasIssues = stolenOrDisrupted.length > 0;
+              if (!hasResults && !hasIssues) return null;
+              const myChoice = allChoicesRef.find(c => c.pid === 0);
+              const myCardName = myChoice ? cn(myChoice.cid) : "";
+              const myTargets = myChoice?.tgt?.map(id => pn(players, id)).join(", ") || "";
+              return <div><div style={S.sub}>📋 조사 결과 공유</div>
+                {recentSecrets.map((s, i) => <button key={`s${i}`} onClick={() => myDecl("free", 0, s.msg)} style={S.btnSm("#8B5CF6")}>{s.msg}</button>)}
+                {stolenOrDisrupted.map((s, i) => s.result === "stolen"
+                  ? <button key={`st${i}`} onClick={() => myDecl("free", 0, `나는 ${myCardName}으로 ${myTargets}을 조사했는데 심연의 손길로 빼앗겼다. ${myCardName}을 썼다고 주장하는 사람이 있으면 의심해야 한다`)} style={S.btnSm("#F97316")}>🖐️ {myCardName} → {myTargets} (빼앗김) 알리기</button>
+                  : <button key={`di${i}`} onClick={() => myDecl("free", 0, `나는 ${myCardName}으로 ${myTargets}을 조사했는데 교란당했다`)} style={S.btnSm("#F97316")}>💨 {myCardName} → {myTargets} (교란) 알리기</button>
+                )}
+              </div>;
+            })()}
 
             {/* 대상별 발언 — 이름 + 액션을 한 줄에 */}
             <div><div style={S.sub}>🎯 대상 지정</div>
