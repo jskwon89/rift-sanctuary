@@ -734,6 +734,8 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
   if (!oth.length || !convSoFar) return null;
   const personality = getBotPersonality(bot.p.id);
   const situation = getGameSituation(players);
+  // 1차에서 내가 한 발언 — 같은 내용 반복 방지용
+  const myPrevMsg = prevStatements?.find(s => s.id === bot.p.id)?.msg || "";
 
   // 0. 누군가 나에게 질문했으면 답변
   const myName = bot.p.name;
@@ -815,11 +817,12 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
     if (topSusp.length && Math.random() < 0.5) {
       const s = topSusp[0];
       if (convSoFar.includes(s.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
+        // 1차에서 이미 이 사람에 대해 말했으면 새로운 말만
+        if (myPrevMsg.includes(s.name)) return null;
         if (personality === "aggressive") {
-          return `${s.name}을 이번에 무조건 추방해야 한다. 더 놔두면 위험하다.`;
+          return `${s.name}을 이번에 추방해야 한다.`;
         } else if (personality === "analytical") {
-          const ev = bot.secrets.find(sec => (sec.targets?.includes(s.id) || sec.target === s.id) && sec.result && sec.result !== "unknown");
-          return ev ? `동의한다. 내 R${ev.round} 조사 결과도 ${s.name}을 가리킨다.` : `동의한다. ${s.name}에 대한 의심이 맞다고 본다.`;
+          return `동의한다. ${s.name}에 대한 의심이 맞다고 본다.`;
         }
         return `동의한다. ${s.name}이 의심스럽다.`;
       }
@@ -935,6 +938,24 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
     const playerClaimedCard = extractClaimedCard(playerMsg);
 
     const personality = getBotPersonality(bot.p.id);
+
+    // -1. "빼앗겼다" / "교란당했다" 에 반응
+    if (!msg && /빼앗|손길/.test(playerMsg) && Math.random() < 0.4) {
+      if (bot.p.faction === "guardian") {
+        msg = pick([
+          "심연의 손길을 쓴 사람이 있다는 거다. 누가 썼는지 추적해야 한다.",
+          "손길로 빼앗겼다면 빼앗은 사람이 그 정보를 가지고 있다. 주의해라.",
+        ]);
+      } else if (!bot.vt.includes(0)) {
+        msg = pick([
+          "빼앗긴 건 안타깝지만 다른 정보로 판단하자.",
+          "손길을 쓴 사람을 찾아야 한다.",
+        ]);
+      }
+    }
+    if (!msg && /교란/.test(playerMsg) && Math.random() < 0.3) {
+      msg = pick(["교란당한 사람이 또 있나. 교란한 사람을 찾아야 한다.", "교란이 많다. 누가 교란의 속삭임을 썼는지 추적하자."]);
+    }
 
     // 0. 카드 중복 감지 — 누군가 이미 주장한 카드를 플레이어가 주장
     if (playerClaimedCard && currentClaims.has(playerClaimedCard.id)) {
@@ -2233,14 +2254,29 @@ export default function App() {
                 <button onClick={() => myDecl("free", 0, `${p.name}, 이번 밤에 어떤 카드 썼나? 결과를 말해라`)} style={{ ...S.btnSm("#64748B"), textAlign: "center", flex: 1, marginBottom: 0 }}>질문</button>
               </div>)}</div>
 
-            {/* 모순 지적 (2명 선택) */}
+            {/* 모순 지적 — 대화 로그에서 서로 다른 사람이 같은 카드 주장한 것 찾기 */}
             {(() => {
               const disc = _roundDiscussions[round] || [];
               const claimedBy = {};
-              disc.forEach(d => { const c = extractClaimedCard(d.msg); if (c) { if (!claimedBy[c.id]) claimedBy[c.id] = []; if (!claimedBy[c.id].some(x => x.id === d.id)) claimedBy[c.id].push(d); } });
-              const dups = Object.entries(claimedBy).filter(([, arr]) => arr.length >= 2 && new Set(arr.map(a => a.id)).size >= 2);
+              // 각 카드별로 서로 다른 사람의 주장만 수집
+              const seen = {};
+              disc.forEach(d => {
+                const c = extractClaimedCard(d.msg);
+                if (c && !/이전에|R\d에서/.test(d.msg)) {
+                  const key = `${c.id}_${d.id}`;
+                  if (!seen[key]) { seen[key] = true; if (!claimedBy[c.id]) claimedBy[c.id] = []; claimedBy[c.id].push(d); }
+                }
+              });
+              const dups = Object.entries(claimedBy).filter(([, arr]) => {
+                const uniqueIds = new Set(arr.map(a => a.id));
+                return uniqueIds.size >= 2;
+              });
               return dups.length > 0 && <div><div style={S.sub}>⚡ 모순 지적</div>
-                {dups.map(([cid, arr]) => <button key={cid} onClick={() => myDecl("free", 0, `${arr.map(d => d.name).join("과 ")}가 둘 다 ${cn(cid)}를 썼다고 했는데, 같은 라운드에 같은 카드는 불가능하다. 둘 중 하나가 거짓말이다`)} style={S.btnSm("#F97316")}>{arr.map(d => d.name).join(" vs ")} — {cn(cid)} 중복!</button>)}</div>;
+                {dups.map(([cid, arr]) => {
+                  const uniqueArr = []; const seenIds = new Set();
+                  arr.forEach(a => { if (!seenIds.has(a.id)) { seenIds.add(a.id); uniqueArr.push(a); } });
+                  return <button key={cid} onClick={() => myDecl("free", 0, `${uniqueArr.map(d => d.name).join("과 ")}가 둘 다 ${cn(cid)}를 썼다고 했는데, 같은 라운드에 같은 카드는 불가능하다. 둘 중 하나가 거짓말이다`)} style={S.btnSm("#F97316")}>{uniqueArr.map(d => d.name).join(" vs ")} — {cn(cid)} 중복!</button>;
+                })}</div>;
             })()}
 
             {/* 일반 발언 */}
