@@ -2063,9 +2063,9 @@ export default function App() {
         </div>}
 
         {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 16px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-          <div style={{ fontSize: 12, letterSpacing: 6, color: "#475569", marginBottom: 8 }}>RIFT OF THE SANCTUARY</div>
-          <h1 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 6px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
-          <p style={{ color: "#475569", margin: "0 0 24px", fontSize: 13 }}>1인 vs AI (Claude) · 프로토타입</p>
+          <div style={{ fontSize: 12, letterSpacing: 6, color: "#475569", marginBottom: 16 }}>RIFT OF THE SANCTUARY</div>
+          <h1 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 12px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
+          <p style={{ color: "#475569", margin: "0 0 36px", fontSize: 13 }}>1인 vs AI · 프로토타입</p>
 
           <div style={{ marginBottom: 20, width: "100%", maxWidth: 320 }}>
             <label style={{ display: "block", fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>🔑 Anthropic API Key <span style={{ color: "#EF4444" }}>*필수</span></label>
