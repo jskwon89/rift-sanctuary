@@ -121,6 +121,418 @@ class Bot {
 }
 
 // ═══════════════════════════════════════════
+// 로컬 봇 토론 엔진 (API 없이 작동)
+// ═══════════════════════════════════════════
+
+// 수호자 정보 카드 결과를 자연어로 변환
+function describeSecret(s, players) {
+  if (!s || !s.result || s.result === "unknown" || s.result === "disrupted" || s.result === "stolen") return null;
+  switch (s.card) {
+    case "prophecy_shard": {
+      const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+      return s.result === "void_present"
+        ? `예지의 파편으로 ${names}을 봤는데 공허가 있다.`
+        : `예지의 파편으로 ${names}을 봤는데 공허가 없었다.`;
+    }
+    case "sentinel_eye": {
+      const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+      return s.result === "same"
+        ? `파수꾼의 눈으로 ${names}을 봤더니 같은 진영이었다.`
+        : `파수꾼의 눈으로 ${names}을 봤더니 다른 진영이다.`;
+    }
+    case "tracker_eye":
+      return `추적자의 눈으로 ${pn(players, s.target)}을 확인했는데 ${cn(s.result)}을 썼다.`;
+    case "shadow_eye": {
+      const tgt = typeof s.result === "number" ? pn(players, s.result) + "을 지목했다" : "지목 없음";
+      return `미행의 눈으로 ${pn(players, s.target)}을 봤더니 ${tgt}.`;
+    }
+    case "vigilant_eye":
+      return `경계의 눈으로 ${pn(players, s.target)}을 봤더니 ${s.result === "targeted" ? "누군가에게 지목당했다" : "지목당하지 않았다"}.`;
+    case "dead_memory":
+      if (s.result === "no_death") return null;
+      return `망자의 기억으로 확인했더니 ${pn(players, s.target)}이 ${cn(s.result)}을 썼다.`;
+    default: return null;
+  }
+}
+
+// 수호자 발언 생성
+function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedCards) {
+  const myChoice = allChoices.find(c => c.pid === bot.p.id);
+  const disrupted = bot.secrets.filter(s => s.round === round && s.result === "disrupted");
+  const newSecrets = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
+  const oth = players.filter(p => p.alive && p.id !== bot.p.id);
+
+  const parts = [];
+
+  // 1. 이번 라운드 조사 결과 공유
+  if (newSecrets.length > 0) {
+    const s = newSecrets[0];
+    const desc = describeSecret(s, players);
+    if (desc) {
+      // 카드 중복 체크
+      const claimed = extractClaimedCard(desc);
+      if (!claimed || !claimedCards.has(claimed.id) || claimedCards.get(claimed.id) === bot.p.id) {
+        parts.push(desc);
+      } else {
+        // 중복 → 결과만 다른 표현으로
+        parts.push(desc);
+      }
+    }
+    // 추적자로 의심스러운 카드를 본 경우 추가 코멘트
+    if (s.card === "tracker_eye" && ["abyssal_blade", "fog_veil", "disruption", "abyssal_touch", "specter_chain"].includes(s.result)) {
+      parts.push(`${pn(players, s.target)}이 전투/방해 카드를 썼다. 의심스럽다.`);
+    }
+    // 예지의 파편으로 공허 있다 → 주의 환기
+    if (s.card === "prophecy_shard" && s.result === "void_present") {
+      const names = (s.targets || []).map(t => pn(players, t)).join(", ");
+      parts.push(`${names} 중 공허가 있으니 주의해라.`);
+    }
+  } else if (disrupted.length > 0) {
+    parts.push("교란당해서 결과를 못 받았다. 누가 교란한 건지 모르겠다.");
+  }
+
+  // 2. 다른 발언에서 모순 감지 (같은 라운드 카드 중복 주장)
+  if (convSoFar && claimedCards.size > 0) {
+    // 확정 공허 정보가 있으면 고발
+    const confirmed = oth.filter(p => bot.kf[p.id] === "void");
+    if (confirmed.length && Math.random() < 0.6) {
+      const cv = pick(confirmed);
+      parts.push(`${cv.name}은 공허가 확실하다. 추방해야 한다.`);
+    }
+  }
+
+  // 3. 확정 정보 기반 추론 (이전 라운드 포함)
+  if (!parts.length) {
+    // 의심 높은 사람 지적
+    const suspects = oth.filter(p => bot.gs(p.id) > 0.15).sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
+    if (suspects.length) {
+      const s = suspects[0];
+      // 의심 근거 찾기
+      const evidence = bot.secrets.find(sec =>
+        (sec.card === "prophecy_shard" && sec.result === "void_present" && sec.targets?.includes(s.id)) ||
+        (sec.card === "sentinel_eye" && sec.result === "different" && sec.targets?.includes(s.id)) ||
+        (sec.card === "tracker_eye" && sec.target === s.id && ["abyssal_blade", "fog_veil", "disruption", "abyssal_touch"].includes(sec.result))
+      );
+      if (evidence) {
+        const desc = describeSecret(evidence, players);
+        if (desc && !parts.some(p => p.includes(s.name))) {
+          parts.push(`이전에 ${desc} ${s.name}을 주시해야 한다.`);
+        }
+      }
+    }
+  }
+
+  // 4. 할 말이 없으면
+  if (!parts.length) {
+    if (oth.length) {
+      parts.push(pick([
+        "확실한 단서가 없다. 정보가 있으면 공유해 달라.",
+        "아직 판단하기 이르다. 좀 더 지켜보자.",
+        "이번 라운드 조사 결과가 없다. 다른 사람의 정보를 듣겠다.",
+      ]));
+    }
+  }
+
+  return parts.slice(0, 2).join(" ");
+}
+
+// 공허 발언 생성
+function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards) {
+  const myChoice = allChoices.find(c => c.pid === bot.p.id);
+  const oth = players.filter(p => p.alive && p.id !== bot.p.id);
+  const nonTeam = oth.filter(p => !bot.vt.includes(p.id));
+  const team = oth.filter(p => bot.vt.includes(p.id) && p.alive);
+  if (!nonTeam.length) return null;
+
+  // 이미 주장된 카드 수집
+  const usedCards = new Set(claimedCards.keys());
+
+  // 팀원이 의심받고 있나?
+  const teamUnderFire = team.length > 0 && convSoFar &&
+    team.some(t => convSoFar.includes(t.name) && (/의심|수상|공허|추방/.test(convSoFar)));
+  const suspTeam = teamUnderFire ? team.find(t => convSoFar.includes(t.name)) : null;
+
+  // === 전략 1: 팀원 엄호 (40%) ===
+  if (suspTeam && Math.random() < 0.4) {
+    // 예지의 파편으로 팀원+수호자 봤는데 공허 없다고 거짓말
+    if (!usedCards.has("prophecy_shard") && nonTeam.length >= 1) {
+      const other = pick(nonTeam);
+      claimedCards.set("prophecy_shard", bot.p.id);
+      return `예지의 파편으로 ${suspTeam.name}, ${other.name}을 봤는데 공허가 없었다. ${suspTeam.name}을 의심하지 마라.`;
+    }
+    if (!usedCards.has("sentinel_eye") && nonTeam.length >= 1) {
+      const other = pick(nonTeam);
+      claimedCards.set("sentinel_eye", bot.p.id);
+      return `파수꾼의 눈으로 ${suspTeam.name}, ${other.name}을 봤더니 같은 진영이었다. 둘 다 수호자라는 뜻이다.`;
+    }
+    return `${suspTeam.name}을 의심하는 건 근거가 부족하다. 다른 쪽을 봐야 한다.`;
+  }
+
+  // === 전략 2: 가짜 조사 결과 발표 (50%) ===
+  const realCid = myChoice?.cid;
+  const usedCombat = realCid && CARDS.find(c => c.id === realCid)?.cat === "combat";
+
+  if (usedCombat || Math.random() < 0.5) {
+    // 사용 가능한 카드 찾기
+    const fakeOptions = [
+      { id: "prophecy_shard", need: 2 },
+      { id: "sentinel_eye", need: 2 },
+      { id: "tracker_eye", need: 1 },
+      { id: "shadow_eye", need: 1 },
+      { id: "vigilant_eye", need: 1 },
+    ].filter(o => !usedCards.has(o.id) && nonTeam.length >= o.need);
+
+    if (fakeOptions.length) {
+      const fc = pick(fakeOptions);
+      claimedCards.set(fc.id, bot.p.id);
+
+      if (fc.id === "prophecy_shard") {
+        const targets = sample(nonTeam, 2);
+        // 수호자를 공허로 몰기 vs 팀원 세탁
+        if (Math.random() < 0.6) {
+          return `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 있다.`;
+        }
+        return `예지의 파편으로 ${targets.map(t => t.name).join(", ")}을 봤는데 공허가 없었다.`;
+      }
+      if (fc.id === "sentinel_eye") {
+        const targets = sample(nonTeam, 2);
+        return Math.random() < 0.5
+          ? `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 같은 진영이었다.`
+          : `파수꾼의 눈으로 ${targets.map(t => t.name).join(", ")}을 봤더니 다른 진영이다.`;
+      }
+      if (fc.id === "tracker_eye") {
+        const target = pick(nonTeam);
+        const susCards = ["fog_veil", "disruption", "abyssal_touch"];
+        if (round >= 2) susCards.push("abyssal_blade", "specter_chain");
+        return `추적자의 눈으로 ${target.name}을 봤더니 ${cn(pick(susCards))}을 썼다. 수상하다.`;
+      }
+      if (fc.id === "shadow_eye") {
+        const target = pick(nonTeam);
+        const fakeTgt = pick(oth.filter(p => p.id !== target.id));
+        return fakeTgt
+          ? `미행의 눈으로 ${target.name}을 봤더니 ${fakeTgt.name}을 지목했다.`
+          : `미행의 눈으로 ${target.name}을 봤더니 지목 없음.`;
+      }
+      if (fc.id === "vigilant_eye") {
+        const target = pick(nonTeam);
+        return `경계의 눈으로 ${target.name}을 봤더니 누군가에게 지목당했다.`;
+      }
+    }
+  }
+
+  // === 전략 3: 수호자 프레이밍 ===
+  if (nonTeam.length) {
+    const target = pick(nonTeam);
+    return pick([
+      `${target.name}의 행동이 좀 이상하다. 다들 주의해라.`,
+      `${target.name}이 정보를 안 주고 있다. 뭘 숨기는 거 아닌가?`,
+      `${target.name}을 조사해 봐야 한다고 생각한다.`,
+    ]);
+  }
+
+  return "아직 판단하기 이르다.";
+}
+
+// 메인 로컬 토론 생성 함수
+function generateLocalDiscussion(players, bots, allChoices, round) {
+  const aliveBots = players.filter(p => p.alive && p.id !== 0).map(p => bots[p.id]).filter(Boolean);
+  if (!aliveBots.length) return [];
+
+  const results = [];
+  let conversation = "";
+  const claimedCards = new Map();
+
+  // 1차: 좌석 순서대로 발언
+  for (const bot of aliveBots) {
+    const msg = bot.p.faction === "guardian"
+      ? localGuardianSpeak(bot, players, allChoices, round, conversation, claimedCards)
+      : localVoidSpeak(bot, players, allChoices, round, conversation, claimedCards);
+
+    if (msg && msg.length > 2) {
+      // 카드 주장 기록
+      const claimed = extractClaimedCard(msg);
+      if (claimed) claimedCards.set(claimed.id, bot.p.id);
+
+      results.push({ id: bot.p.id, msg });
+      conversation += `${bot.p.name}: "${msg}"\n`;
+    }
+  }
+
+  // 2차: 봇간 반응 (최대 3명)
+  if (results.length >= 2) {
+    const reactors = [...aliveBots].sort(() => Math.random() - 0.5).slice(0, Math.min(3, aliveBots.length));
+    for (const bot of reactors) {
+      const msg = localBotReact(bot, players, allChoices, round, conversation, claimedCards, results);
+      if (msg && msg.length > 2) {
+        const claimed = extractClaimedCard(msg);
+        if (claimed) claimedCards.set(claimed.id, bot.p.id);
+        results.push({ id: bot.p.id, msg });
+        conversation += `${bot.p.name}: "${msg}"\n`;
+      }
+    }
+  }
+
+  // 이력 저장
+  _roundDiscussions[round] = results.map(r => ({ id: r.id, name: players.find(p => p.id === r.id)?.name || `P${r.id+1}`, msg: r.msg }));
+  _allRoundClaims[round] = Object.fromEntries(claimedCards);
+
+  return results;
+}
+
+// 봇 반응 생성 (2차 토론 / 플레이어 발언 반응)
+function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards, prevStatements) {
+  const oth = players.filter(p => p.alive && p.id !== bot.p.id);
+  if (!oth.length || !convSoFar) return null;
+
+  // 1. 카드 중복 감지 (모순 지적)
+  const cardMentions = {};
+  for (const [cardId, pid] of claimedCards.entries()) {
+    if (!cardMentions[cardId]) cardMentions[cardId] = [];
+    cardMentions[cardId].push(pid);
+  }
+  for (const [cardId, pids] of Object.entries(cardMentions)) {
+    if (pids.length >= 2) {
+      const names = pids.map(id => pn(players, id)).join("과 ");
+      if (bot.p.faction === "guardian") {
+        return `${names}가 같은 라운드에 같은 카드 ${cn(cardId)}를 썼다고? 둘 중 하나가 거짓말이다.`;
+      }
+    }
+  }
+
+  // 2. 수호자: 확정 공허가 발언에 있으면 반박
+  if (bot.p.faction === "guardian") {
+    const confirmedVoid = oth.filter(p => bot.kf[p.id] === "void");
+    // 누군가가 확정 공허를 감싸고 있으면 지적
+    for (const cv of confirmedVoid) {
+      if (convSoFar.includes(cv.name) && (convSoFar.includes("의심하지 마") || convSoFar.includes("믿") || convSoFar.includes("수호자"))) {
+        const defender = prevStatements?.find(s => s.msg.includes(cv.name) && (s.msg.includes("의심하지 마") || s.msg.includes("수호자")));
+        if (defender && defender.id !== bot.p.id) {
+          return `${pn(players, defender.id)}가 ${cv.name}을 감싸고 있는데, 내 조사 결과로는 ${cv.name}은 공허가 확실하다.`;
+        }
+      }
+    }
+
+    // 의심 높은 사람에 대한 의견
+    const topSusp = oth.filter(p => bot.gs(p.id) > 0.15).sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
+    if (topSusp.length && Math.random() < 0.5) {
+      const s = topSusp[0];
+      // 다른 사람이 이 사람을 언급했으면 동조
+      if (convSoFar.includes(s.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
+        return `동의한다. ${s.name}에 대한 의심이 맞다고 본다.`;
+      }
+    }
+  }
+
+  // 3. 공허: 수호자 간 분열 유도
+  if (bot.p.faction === "void") {
+    const nonTeam = oth.filter(p => !bot.vt.includes(p.id));
+    // 누군가가 의심받고 있으면 가세
+    for (const nt of nonTeam) {
+      if (convSoFar.includes(nt.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
+        if (Math.random() < 0.5) {
+          return pick([
+            `맞다. ${nt.name}이 수상하다. 이번에 추방하자.`,
+            `${nt.name}에 대해 나도 비슷하게 느꼈다.`,
+          ]);
+        }
+      }
+    }
+    // 팀원이 의심받으면 다른 데로 돌리기
+    const team = oth.filter(p => bot.vt.includes(p.id));
+    for (const tm of team) {
+      if (convSoFar.includes(tm.name) && (convSoFar.includes("의심") || convSoFar.includes("공허"))) {
+        const redirect = pick(nonTeam);
+        if (redirect) return `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나?`;
+      }
+    }
+  }
+
+  return null; // 패스
+}
+
+// 플레이어 발언에 대한 로컬 반응 생성
+function generateLocalReactions(players, bots, playerMsg, allChoices, round, convSoFar) {
+  const aliveBots = Object.values(bots).filter(b => b.p.alive);
+  if (!aliveBots.length) return [];
+
+  const conv = convSoFar ? convSoFar + `P1: "${playerMsg}"\n` : `P1: "${playerMsg}"\n`;
+  const currentClaims = _allRoundClaims[round] ? new Map(Object.entries(_allRoundClaims[round])) : new Map();
+  const results = [];
+
+  for (const bot of aliveBots) {
+    const oth = players.filter(p => p.alive && p.id !== bot.p.id);
+    let msg = null;
+
+    // 나를 언급했는지 체크
+    const mentionedMe = playerMsg.includes(bot.p.name);
+    const askedQuestion = /\?|카드|뭐|왜|어떤|근거|증거/.test(playerMsg) && mentionedMe;
+    const suspectedMe = mentionedMe && /의심|수상|공허|거짓/.test(playerMsg);
+
+    if (askedQuestion) {
+      // 질문에 답변
+      if (bot.p.faction === "guardian") {
+        const myChoice = allChoices.find(c => c.pid === bot.p.id);
+        const cardName = myChoice ? cn(myChoice.cid) : "정보 카드";
+        msg = `나는 ${cardName}을 썼다. 결과는 이미 공유했다.`;
+        const newS = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted");
+        if (newS.length) {
+          const desc = describeSecret(newS[0], players);
+          if (desc) msg = desc;
+        }
+      } else {
+        // 공허: 거짓으로 방어
+        msg = pick([
+          "나는 정보 카드를 썼고 결과도 공유했다. 의심할 이유가 없다.",
+          "질문 의도를 모르겠다. 나는 떳떳하다.",
+        ]);
+      }
+    } else if (suspectedMe) {
+      // 의심에 대한 방어
+      if (bot.p.faction === "guardian") {
+        msg = pick([
+          "나는 수호자다. 조사 결과를 봐라.",
+          "내가 공유한 정보가 거짓이라고 생각하나? 근거를 대라.",
+        ]);
+      } else {
+        msg = pick([
+          "근거 없이 의심하지 마라. 나는 수호자다.",
+          "나를 의심할 시간에 진짜 공허를 찾아라.",
+          "내 조사 결과를 봐라. 공허가 이런 정보를 줄 수 있겠나?",
+        ]);
+      }
+    } else {
+      // 일반 반응: 다른 사람에 대한 언급에 반응
+      const mentioned = oth.find(p => playerMsg.includes(p.name));
+      if (mentioned) {
+        if (bot.p.faction === "guardian") {
+          if (bot.kf[mentioned.id] === "void") {
+            msg = `맞다. ${mentioned.name}은 내 조사 결과로도 공허가 확실하다.`;
+          } else if (bot.gs(mentioned.id) > 0.15) {
+            msg = `${mentioned.name}에 대해 나도 의심이 있다.`;
+          }
+        } else {
+          // 공허: 팀원이면 엄호, 수호자면 공격
+          if (bot.vt.includes(mentioned.id)) {
+            msg = pick([
+              `${mentioned.name}은 의심할 이유가 없다.`,
+              `${mentioned.name}을 의심하는 건 시간 낭비다.`,
+            ]);
+          } else if (Math.random() < 0.4) {
+            msg = `${mentioned.name}에 대해 나도 비슷하게 생각한다.`;
+          }
+        }
+      }
+    }
+
+    if (msg && msg.length > 2) {
+      results.push({ id: bot.p.id, msg });
+    }
+  }
+
+  return results;
+}
+
+// ═══════════════════════════════════════════
 // Claude API — 프롬프트 전면 재설계
 // ═══════════════════════════════════════════
 let _currentModel = "claude-sonnet-4-5-20250929";
@@ -893,12 +1305,16 @@ export default function App() {
   const proceedToDiscussion = async (ps, allDraft, pubLogsArr, rnd) => {
     addL(`\n━━━ 라운드 ${rnd} · 낮 ━━━`);
 
-
     const prevConv = convLog ? `이전 대화 요약:\n${convLog}\n` : "";
     setLoading(true);
     let conv = prevConv;
+
+    const useAPI = !!_apiKey;
+
     try {
-      const stmts = await generateDiscussion(ps || players, bots, allDraft || allChoicesRef, rnd || round, gameHistory, pubLogsArr || pubLogs);
+      const stmts = useAPI
+        ? await generateDiscussion(ps || players, bots, allDraft || allChoicesRef, rnd || round, gameHistory, pubLogsArr || pubLogs)
+        : generateLocalDiscussion(ps || players, bots, allDraft || allChoicesRef, rnd || round);
       stmts.forEach(s => { const sp = (ps || players).find(p => p.id === s.id); if (sp?.alive) { const line = `${sp.name}: "${s.msg}"`; addL(`💬 ${line}`); conv += line + "\n"; } });
       if (!stmts.length) addL("💬 아무도 발언하지 않았다.");
     } catch { addL("💬 (토론 생성 실패)"); }
@@ -908,11 +1324,17 @@ export default function App() {
 
     if ((ps || players).find(p => p.id === HID)?.alive) { setPhase("discuss"); }
     else {
-      // 인간 사망 → 봇끼리 API 기반 투표
-      try {
-        const tally = await generateBotVotes(ps || players, bots, allDraft || allChoicesRef, rnd || round, conv);
-        doVoteResult(ps || players, tally, rnd || round);
-      } catch {
+      // 인간 사망 → 투표
+      if (useAPI) {
+        try {
+          const tally = await generateBotVotes(ps || players, bots, allDraft || allChoicesRef, rnd || round, conv);
+          doVoteResult(ps || players, tally, rnd || round);
+        } catch {
+          const tally = {};
+          (ps || players).filter(p => p.alive).forEach(p => { const b = bots[p.id]; if (b) { const v = b.vote(ps || players); tally[v] = (tally[v] || 0) + 1; } });
+          doVoteResult(ps || players, tally, rnd || round);
+        }
+      } else {
         const tally = {};
         (ps || players).filter(p => p.alive).forEach(p => { const b = bots[p.id]; if (b) { const v = b.vote(ps || players); tally[v] = (tally[v] || 0) + 1; } });
         doVoteResult(ps || players, tally, rnd || round);
@@ -931,7 +1353,9 @@ export default function App() {
     _roundDiscussions[round].push({ id: 0, name: "P1", msg });
     setLoading(true);
     try {
-      const rx = await generateReactions(players, bots, msg, allChoicesRef, round, currentConv);
+      const rx = _apiKey
+        ? await generateReactions(players, bots, msg, allChoicesRef, round, currentConv)
+        : generateLocalReactions(players, bots, msg, allChoicesRef, round, currentConv);
       let newConv = currentConv;
       rx.forEach(r => { const sp = players.find(p => p.id === r.id); if (sp?.alive) { addL(`  💬 ${sp.name}: "${r.msg}"`); newConv += `${sp.name}: "${r.msg}"\n`; _roundDiscussions[round].push({ id: r.id, name: sp.name, msg: r.msg }); } });
       if (!rx.length) addL("  💭 반응 없음");
@@ -943,15 +1367,21 @@ export default function App() {
   const submitVote = async (tid) => {
     setLoading(true);
     addL("🗳️ 투표 집계 중...");
-    try {
-      const tally = await generateBotVotes(players, bots, allChoicesRef, round, convLog);
-      if (tid >= 0) tally[tid] = (tally[tid] || 0) + 1;
-      setLoading(false);
-      doVoteResult([...players], tally, round);
-    } catch {
-      // API 실패 시 기존 방식 폴백
-      const ps = [...players];
-      const tally = {};
+    if (_apiKey) {
+      try {
+        const tally = await generateBotVotes(players, bots, allChoicesRef, round, convLog);
+        if (tid >= 0) tally[tid] = (tally[tid] || 0) + 1;
+        setLoading(false);
+        doVoteResult([...players], tally, round);
+      } catch {
+        const ps = [...players], tally = {};
+        if (tid >= 0) tally[tid] = 1;
+        ps.filter(p => p.alive && p.id !== HID).forEach(p => { const b = bots[p.id]; if (b) { const v = b.vote(ps); tally[v] = (tally[v] || 0) + 1; } });
+        setLoading(false);
+        doVoteResult(ps, tally, round);
+      }
+    } else {
+      const ps = [...players], tally = {};
       if (tid >= 0) tally[tid] = 1;
       ps.filter(p => p.alive && p.id !== HID).forEach(p => { const b = bots[p.id]; if (b) { const v = b.vote(ps); tally[v] = (tally[v] || 0) + 1; } });
       setLoading(false);
