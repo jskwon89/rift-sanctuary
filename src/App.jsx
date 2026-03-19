@@ -2062,8 +2062,9 @@ export default function App() {
           {loading && <div style={{ textAlign: "center", padding: "12px 0", color: "#94A3B8", fontSize: 13 }}>{phase === "vote" || phase === "revote" ? "🗳️ 봇들이 투표 중..." : phase === "night_resolving" ? "🌙 밤 결과 처리 중..." : "💭 각 봇이 순서대로 발언 중..."}</div>}
         </div>}
 
-        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "safe center", alignItems: "center", padding: "20px 20px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-          <div style={{ fontSize: 11, letterSpacing: 6, color: "#475569", marginBottom: 20, marginTop: 40 }}>RIFT OF THE SANCTUARY</div>
+        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+          <div style={{ flex: 1 }} />
+          <div style={{ fontSize: 11, letterSpacing: 6, color: "#475569", marginBottom: 20, flexShrink: 0 }}>RIFT OF THE SANCTUARY</div>
           <h1 style={{ fontSize: 30, fontWeight: 900, margin: "0 0 16px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
           <p style={{ color: "#475569", margin: "0 0 40px", fontSize: 13 }}>1인 vs AI · 프로토타입</p>
 
@@ -2083,7 +2084,8 @@ export default function App() {
           </div>}
 
           {/* 인원 선택 */}
-          <div style={{ display: "flex", gap: 12 }}>{[5, 8].map(n => <button key={n} onClick={() => { setPendingN(n); setPhase("rules"); }} style={{ padding: "16px 32px", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 10, color: "#E2E8F0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{n}인</button>)}</div>
+          <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>{[5, 8].map(n => <button key={n} onClick={() => { setPendingN(n); setPhase("rules"); }} style={{ padding: "16px 32px", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 10, color: "#E2E8F0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{n}인</button>)}</div>
+          <div style={{ flex: 1 }} />
         </div>}
 
         {phase === "rules" && <div style={{ flex: 1, overflowY: "auto", padding: "12px 4px", WebkitOverflowScrolling: "touch" }}>
