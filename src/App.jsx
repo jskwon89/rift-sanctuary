@@ -310,19 +310,9 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     } else {
       parts.push("교란당해서 결과를 못 받았다.");
     }
-  } else {
-    // 정보 카드를 안 쓴 경우 (전투 카드 사용)
-    const myCard = myChoice ? cn(myChoice.cid) : null;
-    if (myCard) {
-      const isInfo = myChoice && CARDS.find(c => c.id === myChoice.cid)?.cat === "info";
-      if (!isInfo) {
-        parts.push(pick([
-          "이번 밤에는 전투 카드를 썼다. 공유할 조사 결과가 없다.",
-          "이번에는 정보 카드를 안 썼다. 다른 사람의 결과를 듣겠다.",
-        ]));
-      }
-    }
   }
+  // 정보 카드를 안 쓴 경우 — 1차 발언에서는 언급 안 하고, 다른 할 말을 찾게 함
+  // (질문받으면 2차 토론에서 답변)
 
   // 1.5 카드 중복 감지 — 같은 라운드에 같은 카드를 2명이 주장
   if (convSoFar && claimedCards.size > 0 && parts.length < 2) {
@@ -2227,13 +2217,14 @@ export default function App() {
             {recentSecrets.length > 0 && <div><div style={S.sub}>📋 조사 결과 공유</div>
               {recentSecrets.map((s, i) => <button key={`s${i}`} onClick={() => myDecl("free", 0, s.msg)} style={S.btnSm("#8B5CF6")}>{s.msg}</button>)}</div>}
 
-            {/* 대상별 발언 */}
+            {/* 대상별 발언 — 이름 + 액션을 한 줄에 */}
             <div><div style={S.sub}>🎯 대상 지정</div>
-              {aliveOth.map(p => <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, marginBottom: 4 }}>
-                <button onClick={() => myDecl("free", 0, `${p.name}이(가) 의심스럽다`)} style={{ ...S.btnSm("#EF4444"), textAlign: "center" }}>🔴 {p.name} 의심</button>
-                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 수호자라고 생각한다`)} style={{ ...S.btnSm("#10B981"), textAlign: "center" }}>🟢 {p.name} 신뢰</button>
-                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 공허다. 추방해야 한다`)} style={{ ...S.btnSm("#F59E0B"), textAlign: "center" }}>⚠️ 공허 지목</button>
-                <button onClick={() => myDecl("free", 0, `${p.name}, 이번 밤에 어떤 카드 썼나? 결과를 말해라`)} style={{ ...S.btnSm("#64748B"), textAlign: "center" }}>❓ 질문</button>
+              {aliveOth.map(p => <div key={p.id} style={{ display: "flex", gap: 3, marginBottom: 4, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#94A3B8", minWidth: 28, textAlign: "center", flexShrink: 0 }}>{p.name}</span>
+                <button onClick={() => myDecl("free", 0, `${p.name}이(가) 의심스럽다`)} style={{ ...S.btnSm("#EF4444"), textAlign: "center", flex: 1, marginBottom: 0 }}>의심</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 수호자라고 생각한다`)} style={{ ...S.btnSm("#10B981"), textAlign: "center", flex: 1, marginBottom: 0 }}>신뢰</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 공허다. 추방해야 한다`)} style={{ ...S.btnSm("#F59E0B"), textAlign: "center", flex: 1, marginBottom: 0 }}>공허</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}, 이번 밤에 어떤 카드 썼나? 결과를 말해라`)} style={{ ...S.btnSm("#64748B"), textAlign: "center", flex: 1, marginBottom: 0 }}>질문</button>
               </div>)}</div>
 
             {/* 모순 지적 (2명 선택) */}
