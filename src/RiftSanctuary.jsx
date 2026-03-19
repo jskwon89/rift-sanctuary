@@ -1988,19 +1988,19 @@ export default function App() {
 
   const S = {
     page: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "#0B0E17", color: "#E2E8F0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" },
-    hdr: { padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8", flexShrink: 0 },
-    main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 10px", position: "relative", minHeight: 0 },
-    logBox: { flex: 1, overflowY: "auto", padding: "6px 0", minHeight: 0, WebkitOverflowScrolling: "touch" },
-    pnl: { flexShrink: 0, padding: "8px 0 12px", borderTop: "1px solid rgba(255,255,255,0.06)", maxHeight: "40vh", overflowY: "auto", WebkitOverflowScrolling: "touch" },
-    btn: c => ({ display: "block", width: "100%", padding: "9px 14px", background: `${c}18`, border: `1px solid ${c}44`, borderRadius: 8, color: "#E2E8F0", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", marginBottom: 3 }),
-    btnSm: c => ({ display: "block", width: "100%", padding: "6px 10px", background: `${c}12`, border: `1px solid ${c}33`, borderRadius: 6, color: "#E2E8F0", fontSize: 11, cursor: "pointer", textAlign: "left", marginBottom: 2 }),
-    tBtn: s => ({ padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, background: s ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.05)", border: s ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0" }),
-    sub: { fontSize: 10, color: "#64748B", marginBottom: 3, marginTop: 6 },
+    hdr: { padding: "6px 10px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8", flexShrink: 0 },
+    main: { flex: 1, display: "flex", flexDirection: "column", maxWidth: 560, margin: "0 auto", width: "100%", padding: "0 8px", position: "relative", minHeight: 0, boxSizing: "border-box" },
+    logBox: { flex: 1, overflowY: "auto", padding: "4px 0", minHeight: 0, WebkitOverflowScrolling: "touch" },
+    pnl: { flexShrink: 0, padding: "6px 0 10px", borderTop: "1px solid rgba(255,255,255,0.06)", maxHeight: "50vh", overflowY: "auto", WebkitOverflowScrolling: "touch" },
+    btn: c => ({ display: "block", width: "100%", padding: "10px 12px", background: `${c}18`, border: `1px solid ${c}44`, borderRadius: 8, color: "#E2E8F0", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left", marginBottom: 4, boxSizing: "border-box" }),
+    btnSm: c => ({ display: "block", width: "100%", padding: "8px 10px", background: `${c}12`, border: `1px solid ${c}33`, borderRadius: 6, color: "#E2E8F0", fontSize: 12, cursor: "pointer", textAlign: "left", marginBottom: 3, boxSizing: "border-box" }),
+    tBtn: s => ({ padding: "8px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, background: s ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.05)", border: s ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.1)", color: "#E2E8F0" }),
+    sub: { fontSize: 11, color: "#64748B", marginBottom: 4, marginTop: 8 },
   };
 
   return (
     <div style={S.page}>
-      <style>{`html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}`}</style>
+      <style>{`html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}button{-webkit-appearance:none;touch-action:manipulation}input{-webkit-appearance:none;touch-action:manipulation}`}</style>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
       {phase !== "setup" && phase !== "rules" && <div style={S.hdr}><span>R{round} {human?.faction === "guardian" ? "🛡️" : "🌑"}{!humanAlive ? " 💀" : ""}</span><span style={{ fontWeight: 700, letterSpacing: 1 }}>성역의 균열</span><span style={{ display: "flex", alignItems: "center", gap: 8 }}><button onClick={() => setShowHelp(h => !h)} style={{ background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#94A3B8", fontSize: 11, padding: "2px 8px", cursor: "pointer" }}>📖 규칙</button>{pendingModel === "opus" ? "🧠" : "⚡"} 생존{alive.length}</span></div>}
       <div style={S.main}>
@@ -2062,7 +2062,7 @@ export default function App() {
           {loading && <div style={{ textAlign: "center", padding: "12px 0", color: "#94A3B8", fontSize: 13 }}>{phase === "vote" || phase === "revote" ? "🗳️ 봇들이 투표 중..." : phase === "night_resolving" ? "🌙 밤 결과 처리 중..." : "💭 각 봇이 순서대로 발언 중..."}</div>}
         </div>}
 
-        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
+        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 16px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
           <div style={{ fontSize: 12, letterSpacing: 6, color: "#475569", marginBottom: 8 }}>RIFT OF THE SANCTUARY</div>
           <h1 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 6px", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
           <p style={{ color: "#475569", margin: "0 0 24px", fontSize: 13 }}>1인 vs AI (Claude) · 프로토타입</p>
@@ -2089,7 +2089,7 @@ export default function App() {
           {!pendingApiKey && <div style={{ marginTop: 8, fontSize: 11, color: "#EF4444" }}>API 키를 입력해야 게임을 시작할 수 있습니다</div>}
         </div>}
 
-        {phase === "rules" && <div style={{ flex: 1, overflowY: "auto", padding: "16px 4px" }}>
+        {phase === "rules" && <div style={{ flex: 1, overflowY: "auto", padding: "12px 4px", WebkitOverflowScrolling: "touch" }}>
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <h2 style={{ fontSize: 22, fontWeight: 900, margin: "0 0 4px", color: "#E2E8F0" }}>게임 규칙</h2>
             <p style={{ color: "#64748B", fontSize: 12, margin: 0 }}>{pendingN}인 모드 · 수호자 {pendingN === 5 ? 4 : 6} / 공허 {pendingN === 5 ? 1 : 2}</p>
@@ -2191,11 +2191,11 @@ export default function App() {
 
             {/* 대상별 발언 */}
             <div><div style={S.sub}>🎯 대상 지정</div>
-              {aliveOth.map(p => <div key={p.id} style={{ display: "flex", gap: 3, marginBottom: 3, flexWrap: "wrap" }}>
-                <button onClick={() => myDecl("free", 0, `${p.name}이(가) 의심스럽다`)} style={{ ...S.btnSm("#EF4444"), flex: 1, minWidth: 70, textAlign: "center" }}>🔴 {p.name} 의심</button>
-                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 수호자라고 생각한다`)} style={{ ...S.btnSm("#10B981"), flex: 1, minWidth: 70, textAlign: "center" }}>🟢 {p.name} 신뢰</button>
-                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 공허다. 추방해야 한다`)} style={{ ...S.btnSm("#F59E0B"), flex: 1, minWidth: 70, textAlign: "center" }}>⚠️ 공허 지목</button>
-                <button onClick={() => myDecl("free", 0, `${p.name}, 이번 밤에 어떤 카드 썼나? 결과를 말해라`)} style={{ ...S.btnSm("#64748B"), flex: 1, minWidth: 70, textAlign: "center" }}>❓ 질문</button>
+              {aliveOth.map(p => <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, marginBottom: 4 }}>
+                <button onClick={() => myDecl("free", 0, `${p.name}이(가) 의심스럽다`)} style={{ ...S.btnSm("#EF4444"), textAlign: "center" }}>🔴 {p.name} 의심</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 수호자라고 생각한다`)} style={{ ...S.btnSm("#10B981"), textAlign: "center" }}>🟢 {p.name} 신뢰</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}은(는) 공허다. 추방해야 한다`)} style={{ ...S.btnSm("#F59E0B"), textAlign: "center" }}>⚠️ 공허 지목</button>
+                <button onClick={() => myDecl("free", 0, `${p.name}, 이번 밤에 어떤 카드 썼나? 결과를 말해라`)} style={{ ...S.btnSm("#64748B"), textAlign: "center" }}>❓ 질문</button>
               </div>)}</div>
 
             {/* 모순 지적 (2명 선택) */}
@@ -2210,16 +2210,16 @@ export default function App() {
 
             {/* 일반 발언 */}
             <div><div style={S.sub}>💬 일반</div>
-              <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                <button onClick={() => myDecl("free", 0, "정보가 있으면 공유해 달라")} style={S.btnSm("#6B7280")}>정보 요청</button>
-                <button onClick={() => myDecl("free", 0, "아직 판단하기 이르다. 좀 더 지켜보자")} style={S.btnSm("#6B7280")}>관망</button>
-                <button onClick={() => myDecl("free", 0, "이번 투표가 중요하다. 신중하게 골라야 한다")} style={S.btnSm("#6B7280")}>신중 촉구</button>
-                {round >= 2 && <button onClick={() => myDecl("free", 0, "이전 라운드 발언과 지금 발언이 모순되는 사람이 있다")} style={S.btnSm("#F97316")}>모순 경고</button>}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
+                <button onClick={() => myDecl("free", 0, "정보가 있으면 공유해 달라")} style={{ ...S.btnSm("#6B7280"), textAlign: "center" }}>정보 요청</button>
+                <button onClick={() => myDecl("free", 0, "아직 판단하기 이르다. 좀 더 지켜보자")} style={{ ...S.btnSm("#6B7280"), textAlign: "center" }}>관망</button>
+                <button onClick={() => myDecl("free", 0, "이번 투표가 중요하다. 신중하게 골라야 한다")} style={{ ...S.btnSm("#6B7280"), textAlign: "center" }}>신중 촉구</button>
+                {round >= 2 && <button onClick={() => myDecl("free", 0, "이전 라운드 발언과 지금 발언이 모순되는 사람이 있다")} style={{ ...S.btnSm("#F97316"), textAlign: "center" }}>모순 경고</button>}
               </div></div>
 
             {/* 공허 전용: 거짓말 */}
             {human?.faction === "void" && <div><div style={S.sub}>🌑 거짓말 (공허 전용)</div>
-              <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
                 {aliveOth.filter(p => p.id !== 0).length >= 2 && (() => {
                   const targets = aliveOth.filter(p => !players.find(x => x.id === 0 && x.faction === "void" && bots[p.id]?.vt?.includes(0)));
                   const t2 = targets.length >= 2 ? [targets[0], targets[1]] : targets.length >= 1 ? [targets[0], aliveOth[0]] : [];
