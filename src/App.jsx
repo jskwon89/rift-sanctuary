@@ -306,9 +306,21 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     }
   } else if (disrupted.length > 0) {
     if (personality === "aggressive") {
-      parts.push("교란당했다. 교란한 놈이 공허다. 누가 교란의 속삭임을 썼는지 추적해야 한다.");
+      parts.push("교란당해서 결과를 못 받았다. 누가 교란했는지 추적해야 한다.");
     } else {
-      parts.push("교란당해서 결과를 못 받았다. 누가 교란한 건지 모르겠다.");
+      parts.push("교란당해서 결과를 못 받았다.");
+    }
+  } else {
+    // 정보 카드를 안 쓴 경우 (전투 카드 사용)
+    const myCard = myChoice ? cn(myChoice.cid) : null;
+    if (myCard) {
+      const isInfo = myChoice && CARDS.find(c => c.id === myChoice.cid)?.cat === "info";
+      if (!isInfo) {
+        parts.push(pick([
+          "이번 밤에는 전투 카드를 썼다. 공유할 조사 결과가 없다.",
+          "이번에는 정보 카드를 안 썼다. 다른 사람의 결과를 듣겠다.",
+        ]));
+      }
     }
   }
 
@@ -508,7 +520,7 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
         ] : [
           "확실한 단서가 없다. 정보가 있으면 공유해 달라.",
           "아직 판단하기 이르다. 좀 더 지켜보자.",
-          "이번 라운드 조사 결과가 없다. 다른 사람의 정보를 듣겠다.",
+          "다른 사람의 정보를 듣고 판단하겠다.",
         ];
         parts.push(pick(fillers));
       }
@@ -552,7 +564,7 @@ function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards
     if (!usedCards.has("prophecy_shard") && nonTeam.length >= 1) {
       const other = pick(nonTeam);
       claimedCards.set("prophecy_shard", bot.p.id);
-      return `예지의 파편으로 ${suspTeam.name}, ${other.name}을 봤는데 공허가 없었다. ${suspTeam.name}을 의심하지 마라.`;
+      return `예지의 파편으로 ${suspTeam.name}, ${other.name}을 봤는데 공허가 없었다. 둘 다 수호자다.`;
     }
     if (!usedCards.has("sentinel_eye") && nonTeam.length >= 1) {
       const other = pick(nonTeam);
@@ -703,9 +715,12 @@ function generateLocalDiscussion(players, bots, allChoices, round) {
     }
   }
 
-  // 2차: 봇간 반응 (최대 3명)
+  // 2차: 봇간 반응 (최대 3명, 질문받은 봇 우선)
   if (results.length >= 2) {
-    const reactors = [...aliveBots].sort(() => Math.random() - 0.5).slice(0, Math.min(3, aliveBots.length));
+    // 질문받은 봇을 우선 포함
+    const questioned = aliveBots.filter(b => conversation.includes(b.p.name) && /결과를 말해|결과를 공유|뭘 조사|카드 썼나|공유해 달라/.test(conversation.split(b.p.name).pop()?.split("\n")[0] || ""));
+    const others = aliveBots.filter(b => !questioned.includes(b)).sort(() => Math.random() - 0.5);
+    const reactors = [...questioned, ...others].slice(0, Math.min(3, aliveBots.length));
     for (const bot of reactors) {
       const msg = localBotReact(bot, players, allChoices, round, conversation, claimedCards, results);
       if (msg && msg.length > 2) {
@@ -730,6 +745,29 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
   if (!oth.length || !convSoFar) return null;
   const personality = getBotPersonality(bot.p.id);
   const situation = getGameSituation(players);
+
+  // 0. 누군가 나에게 질문했으면 답변
+  const myName = bot.p.name;
+  const askedMe = convSoFar.includes(myName) && /결과를 말해|결과를 공유|뭘 조사|뭘 했|카드 썼나|공유해 달라/.test(convSoFar.split(myName).pop()?.split("\n")[0] || "");
+  if (askedMe) {
+    if (bot.p.faction === "guardian") {
+      const newS = bot.secrets.filter(s => s.round === round && s.result && s.result !== "unknown" && s.result !== "disrupted" && s.result !== "stolen");
+      if (newS.length) {
+        const desc = describeSecret(newS[0], players);
+        if (desc) return desc;
+      }
+      const myChoice = allChoices.find(c => c.pid === bot.p.id);
+      if (myChoice) {
+        const isInfo = CARDS.find(c => c.id === myChoice.cid)?.cat === "info";
+        return isInfo ? "교란당해서 결과를 못 받았다." : `나는 ${cn(myChoice.cid)}을 썼다. 정보 카드가 아니라 공유할 조사 결과가 없다.`;
+      }
+    } else {
+      // 공허: 이미 거짓말한 게 있으면 반복, 없으면 새로 만듦
+      const myStmt = prevStatements?.find(s => s.id === bot.p.id);
+      if (myStmt) return `이미 말했다. ${myStmt.msg}`;
+      return "나는 정보 카드를 썼고 결과도 공유했다.";
+    }
+  }
 
   // 1. 카드 중복 감지 (모순 지적)
   const cardMentions = {};
