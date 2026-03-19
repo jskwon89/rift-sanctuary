@@ -832,11 +832,39 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
     // 나를 언급했는지 체크
     const mentionedMe = playerMsg.includes(bot.p.name);
     const askedQuestion = /\?|카드|뭐|왜|어떤|근거|증거/.test(playerMsg) && mentionedMe;
-    const suspectedMe = mentionedMe && /의심|수상|공허|거짓/.test(playerMsg);
+    // "공허: 없다", "공허가 없다", "공허가 없었다" = 클리어 (의심 아님)
+    const isClearance = mentionedMe && /공허.{0,3}없/.test(playerMsg);
+    const suspectedMe = mentionedMe && !isClearance && /의심|수상|공허|거짓|추방/.test(playerMsg);
+    // 카드 주장 감지 (중복 체크용)
+    const playerClaimedCard = extractClaimedCard(playerMsg);
 
     const personality = getBotPersonality(bot.p.id);
 
-    if (askedQuestion) {
+    // 0. 카드 중복 감지 — 누군가 이미 주장한 카드를 플레이어가 주장
+    if (playerClaimedCard && currentClaims.has(playerClaimedCard.id)) {
+      const prevOwner = currentClaims.get(playerClaimedCard.id);
+      if (prevOwner !== 0) { // 플레이어(id=0)가 아닌 봇이 이미 주장
+        if (bot.p.id === parseInt(prevOwner)) {
+          // 내가 이미 그 카드를 주장했는데 플레이어도 주장 → 반박
+          msg = `잠깐, 나도 ${playerClaimedCard.name}을 썼다. 같은 라운드에 같은 카드를 2명이 쓸 수 없다. P1이 거짓말하고 있다.`;
+        } else if (bot.p.faction === "guardian" && Math.random() < 0.6) {
+          // 다른 봇이 주장한 카드를 플레이어도 주장 → 모순 지적
+          msg = `${pn(players, parseInt(prevOwner))}과 P1이 둘 다 ${playerClaimedCard.name}을 썼다고? 같은 라운드에 같은 카드는 불가능하다. 둘 중 하나가 거짓말이다.`;
+        }
+      }
+    }
+
+    // 0.5 클리어당했을 때 반응
+    if (!msg && isClearance) {
+      if (bot.p.faction === "guardian") {
+        msg = Math.random() < 0.5 ? null : pick(["확인해 줘서 고맙다.", "좋다. 나는 수호자다."]);
+      } else {
+        // 공허인데 클리어당함 → 안심하는 척
+        msg = Math.random() < 0.3 ? pick(["고맙다. 나를 믿어 달라.", "다행이다. 다른 쪽을 조사하자."]) : null;
+      }
+    }
+
+    if (!msg && askedQuestion) {
       // 질문에 답변
       if (bot.p.faction === "guardian") {
         const myChoice = allChoices.find(c => c.pid === bot.p.id);
@@ -1545,6 +1573,7 @@ export default function App() {
   const [pubLogs, setPubLogs] = useState([]);
   const [predictions, setPredictions] = useState({});
   const [revoteCandidates, setRevoteCandidates] = useState([]);
+  const [freeText, setFreeText] = useState("");
   const ref = useRef(null);
 
   const addL = useCallback(m => setLog(p => [...p, m]), []);
@@ -2100,6 +2129,11 @@ export default function App() {
               <button onClick={() => myDecl("trust", p.id)} style={{ ...S.btnSm("#10B981"), flex: 1, textAlign: "center" }}>🟢 {p.name} 신뢰</button>
               <button onClick={() => myDecl("faction", p.id, "void")} style={{ ...S.btnSm("#F59E0B"), flex: 1, textAlign: "center" }}>⚠️ 공허 지목</button>
             </div>)}</div>}
+          {dc < 3 && <div style={{ marginTop: 6 }}><div style={S.sub}>✏️ 자유 발언</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <input value={freeText} onChange={e => setFreeText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && freeText.trim()) { myDecl("free", 0, freeText.trim()); setFreeText(""); } }} placeholder="직접 입력 (거짓말 가능)" style={{ flex: 1, padding: "6px 8px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, color: "#E2E8F0", fontSize: 12, outline: "none" }} />
+              <button onClick={() => { if (freeText.trim()) { myDecl("free", 0, freeText.trim()); setFreeText(""); } }} style={{ ...S.btnSm("#8B5CF6"), whiteSpace: "nowrap" }}>전송</button>
+            </div></div>}
           {dc >= 3 && <div style={{ textAlign: "center", color: "#64748B", fontSize: 12, margin: "8px 0" }}>발언 완료</div>}
           <button onClick={() => setPhase("vote")} style={{ ...S.btn("#EF4444"), textAlign: "center", marginTop: 8 }}>🗳️ 투표로</button>
         </div>}
