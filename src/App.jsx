@@ -2000,7 +2000,7 @@ export default function App() {
 
   return (
     <div style={S.page}>
-      <style>{`html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}button{-webkit-appearance:none;touch-action:manipulation}input{-webkit-appearance:none;touch-action:manipulation}`}</style>
+      <style>{`html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}button{-webkit-appearance:none;touch-action:manipulation}input{-webkit-appearance:none;touch-action:manipulation}*::-webkit-scrollbar{display:none}*{-ms-overflow-style:none;scrollbar-width:none}`}</style>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
       {phase !== "setup" && phase !== "rules" && <div style={S.hdr}><span style={{ whiteSpace: "nowrap" }}>R{round} {human?.faction === "guardian" ? "🛡️" : "🌑"}{!humanAlive ? " 💀" : ""}</span><span style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>성역의 균열</span><span style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", flexShrink: 0 }}><button onClick={() => setShowHelp(h => !h)} style={{ background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#94A3B8", fontSize: 10, padding: "2px 6px", cursor: "pointer" }}>규칙</button><span style={{ fontSize: 10 }}>{alive.length}명</span></span></div>}
       <div style={S.main}>
@@ -2062,7 +2062,8 @@ export default function App() {
           {loading && <div style={{ textAlign: "center", padding: "12px 0", color: "#94A3B8", fontSize: 13 }}>{phase === "vote" || phase === "revote" ? "🗳️ 봇들이 투표 중..." : phase === "night_resolving" ? "🌙 밤 결과 처리 중..." : "💭 각 봇이 순서대로 발언 중..."}</div>}
         </div>}
 
-        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        {phase === "setup" && <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", overflowY: "auto", WebkitOverflowScrolling: "touch", position: "relative" }}>
+          <div style={{ position: "absolute", top: 8, left: 12, fontSize: 10, color: "#334155" }}>v4.0</div>
           <div style={{ flex: 1, minHeight: 20 }} />
           <div style={{ fontSize: 10, letterSpacing: 5, color: "#475569", marginBottom: 10, flexShrink: 0 }}>RIFT OF THE SANCTUARY</div>
           <h1 style={{ fontSize: 28, fontWeight: 900, margin: "0 0 8px", padding: "16px 0", background: "linear-gradient(135deg, #3B82F6, #8B5CF6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>성역의 균열</h1>
