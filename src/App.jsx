@@ -882,9 +882,10 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
       }
     }
 
-    // 누군가가 의심받고 있으면 가세
+    // 누군가가 의심받고 있으면 가세 — 같은 발언 내에서 이름+의심이 함께 있어야
     for (const nt of nonTeam) {
-      if (convSoFar.includes(nt.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
+      const isSuspected = convSoFar.split("\n").some(line => line.includes(nt.name) && /의심|수상|공허다|추방/.test(line) && !line.startsWith(`${nt.name}:`));
+      if (isSuspected) {
         if (Math.random() < 0.5) {
           if (personality === "aggressive") {
             return pick([
@@ -1035,26 +1036,44 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
         }
       }
     } else if (suspectedMe) {
-      // 의심에 대한 방어 — 성격별
+      // 의심에 대한 방어 — 실제 상황 기반
+      // 예지/파수꾼 결과로 의심받는 경우 인정하고 반론
+      const isFromProphecy = /예지|파편|공허.*있다|중.*공허/.test(playerMsg);
+      const myPrevStmt = (_roundDiscussions[round] || []).find(d => d.id === bot.p.id);
+      const didShareInfo = myPrevStmt && /파편|눈|추적|미행|경계/.test(myPrevStmt.msg);
+
       if (bot.p.faction === "guardian") {
-        if (personality === "aggressive") {
+        if (isFromProphecy) {
+          // 예지 결과로 의심 → "나 아니면 상대방이다" 식 반론
+          const otherSuspect = oth.find(p => playerMsg.includes(p.name) && p.id !== bot.p.id);
+          if (otherSuspect) {
+            msg = didShareInfo
+              ? `둘 중 하나라면 내가 공유한 정보를 봐라. 나보다 ${otherSuspect.name}을 먼저 확인해야 한다.`
+              : `예지 결과라면 나 아니면 ${otherSuspect.name}이다. 다른 조사로 확인해 달라.`;
+          } else {
+            msg = didShareInfo
+              ? "나는 정보를 공유했다. 공허가 이런 정보를 줄 이유가 없다."
+              : "나는 수호자다. 다른 조사로 확인해 달라.";
+          }
+        } else if (didShareInfo) {
           msg = pick([
-            "나를 의심하면 공허만 좋다. 진짜 적을 찾아라.",
-            "나는 수호자다. 나를 의심할 근거가 뭔데?",
+            "나는 조사 결과를 공유했다. 공허가 이런 정보를 줄 수 있겠나?",
+            "내가 공유한 정보를 확인해 봐라. 나는 수호자다.",
           ]);
-        } else if (personality === "analytical") {
-          const ev = bot.secrets.filter(s => s.result && s.result !== "unknown" && s.result !== "disrupted");
-          msg = ev.length
-            ? `내가 R${ev[0].round}에서 공유한 정보를 봐라. 공허가 이런 정확한 정보를 줄 수 있나?`
-            : "나는 수호자다. 조사 결과로 판단해 달라.";
         } else {
           msg = pick([
-            "나는 수호자다. 조사 결과를 봐라.",
-            "내가 공유한 정보가 거짓이라고 생각하나? 근거를 대라.",
+            "나는 수호자다. 다른 증거로 판단해 달라.",
+            "근거가 부족하다. 나를 의심할 시간에 다른 사람을 봐라.",
           ]);
         }
       } else {
-        if (personality === "aggressive") {
+        // 공허 방어
+        if (isFromProphecy) {
+          const otherSuspect = oth.find(p => playerMsg.includes(p.name) && p.id !== bot.p.id && !bot.vt.includes(p.id));
+          msg = otherSuspect
+            ? `나보다 ${otherSuspect.name}을 봐야 한다. 나는 수호자다.`
+            : "근거 없이 의심하지 마라. 나는 수호자다.";
+        } else if (personality === "aggressive") {
           const nonTeam = oth.filter(p => !bot.vt.includes(p.id));
           const redirect = nonTeam.length ? pick(nonTeam) : null;
           msg = redirect
