@@ -124,6 +124,90 @@ class Bot {
 // 로컬 봇 토론 엔진 (API 없이 작동)
 // ═══════════════════════════════════════════
 
+// 크로스라운드 모순 감지 — 이전 라운드 토론 기록 분석
+function detectCrossRoundContradictions(bot, players, round) {
+  const contradictions = [];
+  if (bot.p.faction !== "guardian") return contradictions;
+
+  // 1. 이전 라운드에서 "공허 없다"고 한 대상을 이번에 다른 사람이 공허로 의심
+  for (let r = 1; r < round; r++) {
+    const disc = _roundDiscussions[r];
+    if (!disc) continue;
+    for (const d of disc) {
+      // "예지의 파편으로 PX, PY를 봤는데 공허가 없었다" 발언 찾기
+      if (d.msg.includes("공허가 없었다") || d.msg.includes("공허가 없다")) {
+        // 이 주장에 포함된 플레이어 추출
+        const mentionedPlayers = players.filter(p => d.msg.includes(p.name) && p.id !== d.id);
+        // 현재 대화에서 이 플레이어를 공허로 의심하는 발언이 있나?
+        const currentDisc = _roundDiscussions[round] || [];
+        for (const cd of currentDisc) {
+          if (cd.id === d.id) continue; // 같은 사람이면 스킵
+          for (const mp of mentionedPlayers) {
+            if (cd.msg.includes(mp.name) && /공허|의심|수상/.test(cd.msg)) {
+              // d가 "공허 없다"고 했는데 cd가 그 사람을 의심 → 모순은 아님 (다른 사람이 의심)
+              // 하지만 d 본인이 이번에 같은 사람을 의심하면 모순
+            }
+          }
+        }
+      }
+
+      // 2. 같은 사람이 라운드마다 다른 카드를 주장 (정상: 매 라운드 다른 카드)
+      // 이건 모순이 아님 — 스킵
+
+      // 3. 추방된 수호자를 공허라고 주장한 사람 → 거짓말쟁이
+      for (const elim of _eliminationHistory) {
+        if (elim.faction === "수호자" && elim.type === "추방") {
+          // 이전에 이 수호자를 "공허가 있다"고 주장한 사람 찾기
+          if (d.msg.includes(elim.name) && d.msg.includes("공허가 있다")) {
+            const accuser = players.find(p => p.id === d.id && p.alive);
+            if (accuser && accuser.id !== bot.p.id) {
+              contradictions.push({
+                type: "false_accusation",
+                accuserId: d.id,
+                accuserName: d.name || pn(players, d.id),
+                targetName: elim.name,
+                round: r,
+                msg: `R${r}에서 ${d.name || pn(players, d.id)}가 ${elim.name}에 대해 "공허가 있다"고 했는데, ${elim.name}은 추방 후 수호자로 밝혀졌다. ${d.name || pn(players, d.id)}가 거짓말한 것이다.`
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 4. 이전 라운드에서 두 사람이 같은 카드를 주장 (아직 지적 안 된 것)
+  for (let r = 1; r < round; r++) {
+    const claims = _allRoundClaims[r];
+    if (!claims) continue;
+    // 현재 라운드의 주장과 겹치는지 체크는 같은 라운드 내에서만 의미
+  }
+
+  return contradictions;
+}
+
+// 이전 라운드 공허 거짓말 기록 조회 (일관성 유지)
+function getVoidPrevClaims(botId, round) {
+  const prevClaims = [];
+  for (let r = 1; r < round; r++) {
+    const disc = _roundDiscussions[r];
+    if (!disc) continue;
+    const myStatements = disc.filter(d => d.id === botId);
+    for (const s of myStatements) {
+      const claimed = extractClaimedCard(s.msg);
+      if (claimed) {
+        // 주장한 대상 추출
+        const targets = [];
+        const pPattern = /P(\d+)/g;
+        let m;
+        while ((m = pPattern.exec(s.msg)) !== null) targets.push(`P${m[1]}`);
+        prevClaims.push({ round: r, card: claimed, targets, msg: s.msg });
+      }
+    }
+  }
+  return prevClaims;
+}
+
 // 수호자 정보 카드 결과를 자연어로 변환
 function describeSecret(s, players) {
   if (!s || !s.result || s.result === "unknown" || s.result === "disrupted" || s.result === "stolen") return null;
@@ -191,23 +275,68 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
     parts.push("교란당해서 결과를 못 받았다. 누가 교란한 건지 모르겠다.");
   }
 
-  // 2. 다른 발언에서 모순 감지 (같은 라운드 카드 중복 주장)
-  if (convSoFar && claimedCards.size > 0) {
-    // 확정 공허 정보가 있으면 고발
-    const confirmed = oth.filter(p => bot.kf[p.id] === "void");
-    if (confirmed.length && Math.random() < 0.6) {
-      const cv = pick(confirmed);
-      parts.push(`${cv.name}은 공허가 확실하다. 추방해야 한다.`);
+  // 2. 크로스라운드 모순 지적 (R2+)
+  if (round >= 2) {
+    const contradictions = detectCrossRoundContradictions(bot, players, round);
+    if (contradictions.length && parts.length < 2) {
+      const c = contradictions[0];
+      if (c.type === "false_accusation") {
+        parts.push(c.msg);
+      }
+    }
+
+    // 추방된 수호자 활용: 이전에 그 사람을 "같은 진영"이라고 한 사람이 있으면 그것도 수호자
+    for (const elim of _eliminationHistory) {
+      if (elim.faction === "수호자" && parts.length < 2) {
+        for (let r = 1; r < round; r++) {
+          const disc = _roundDiscussions[r];
+          if (!disc) continue;
+          for (const d of disc) {
+            if (d.msg.includes(elim.name) && d.msg.includes("같은 진영") && d.id !== bot.p.id) {
+              // PX와 elim이 같은 진영 → PX도 수호자 → d의 주장이 신뢰할만함
+              const otherTarget = players.find(p => d.msg.includes(p.name) && p.name !== elim.name && p.alive);
+              if (otherTarget) {
+                parts.push(`${elim.name}이 수호자였으니, R${r}에서 ${pn(players, d.id)}가 말한 "${elim.name}과 ${otherTarget.name}이 같은 진영"이 맞다면 ${otherTarget.name}도 수호자다.`);
+              }
+            }
+          }
+        }
+      }
+      // 추방된 공허 활용: "공허 없다"고 한 대상에 포함됐으면 그 주장이 거짓
+      if (elim.faction === "공허" && parts.length < 2) {
+        for (let r = 1; r < round; r++) {
+          const disc = _roundDiscussions[r];
+          if (!disc) continue;
+          for (const d of disc) {
+            if (d.msg.includes(elim.name) && d.msg.includes("공허가 없") && d.id !== bot.p.id) {
+              const speaker = players.find(p => p.id === d.id && p.alive);
+              if (speaker) {
+                parts.push(`R${r}에서 ${speaker.name}이 "${elim.name} 쪽에 공허가 없다"고 했는데 ${elim.name}은 공허였다. ${speaker.name}이 거짓말한 것이다!`);
+                bot.as(speaker.id, 0.4); // 의심도 대폭 증가
+              }
+            }
+          }
+        }
+      }
     }
   }
 
-  // 3. 확정 정보 기반 추론 (이전 라운드 포함)
+  // 3. 확정 공허 고발
+  if (parts.length < 2) {
+    const confirmed = oth.filter(p => bot.kf[p.id] === "void");
+    if (confirmed.length && Math.random() < 0.6) {
+      const cv = pick(confirmed);
+      if (!parts.some(p => p.includes(cv.name))) {
+        parts.push(`${cv.name}은 공허가 확실하다. 추방해야 한다.`);
+      }
+    }
+  }
+
+  // 4. 확정 정보 기반 추론 (이전 라운드 포함)
   if (!parts.length) {
-    // 의심 높은 사람 지적
     const suspects = oth.filter(p => bot.gs(p.id) > 0.15).sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
     if (suspects.length) {
       const s = suspects[0];
-      // 의심 근거 찾기
       const evidence = bot.secrets.find(sec =>
         (sec.card === "prophecy_shard" && sec.result === "void_present" && sec.targets?.includes(s.id)) ||
         (sec.card === "sentinel_eye" && sec.result === "different" && sec.targets?.includes(s.id)) ||
@@ -218,18 +347,38 @@ function localGuardianSpeak(bot, players, allChoices, round, convSoFar, claimedC
         if (desc && !parts.some(p => p.includes(s.name))) {
           parts.push(`이전에 ${desc} ${s.name}을 주시해야 한다.`);
         }
+      } else {
+        // 교차 검증: 여러 정보를 조합
+        const prophecyHits = bot.secrets.filter(sec => sec.card === "prophecy_shard" && sec.result === "void_present" && sec.targets?.includes(s.id));
+        const sentinelHits = bot.secrets.filter(sec => sec.card === "sentinel_eye" && sec.result === "different" && sec.targets?.includes(s.id));
+        if (prophecyHits.length + sentinelHits.length >= 2) {
+          parts.push(`여러 조사 결과를 종합하면 ${s.name}이 공허일 가능성이 높다.`);
+        }
       }
     }
   }
 
-  // 4. 할 말이 없으면
+  // 5. 할 말이 없으면
   if (!parts.length) {
     if (oth.length) {
-      parts.push(pick([
-        "확실한 단서가 없다. 정보가 있으면 공유해 달라.",
-        "아직 판단하기 이르다. 좀 더 지켜보자.",
-        "이번 라운드 조사 결과가 없다. 다른 사람의 정보를 듣겠다.",
-      ]));
+      // R2+ 에서는 이전 라운드 정보 언급
+      if (round >= 2 && bot.secrets.length > 0) {
+        const oldS = bot.secrets.filter(s => s.round < round && s.result && s.result !== "unknown");
+        if (oldS.length) {
+          const s = pick(oldS);
+          const desc = describeSecret(s, players);
+          if (desc) {
+            parts.push(`R${s.round}에서 ${desc} 참고해 달라.`);
+          }
+        }
+      }
+      if (!parts.length) {
+        parts.push(pick([
+          "확실한 단서가 없다. 정보가 있으면 공유해 달라.",
+          "아직 판단하기 이르다. 좀 더 지켜보자.",
+          "이번 라운드 조사 결과가 없다. 다른 사람의 정보를 듣겠다.",
+        ]));
+      }
     }
   }
 
@@ -268,7 +417,40 @@ function localVoidSpeak(bot, players, allChoices, round, convSoFar, claimedCards
     return `${suspTeam.name}을 의심하는 건 근거가 부족하다. 다른 쪽을 봐야 한다.`;
   }
 
-  // === 전략 2: 가짜 조사 결과 발표 (50%) ===
+  // === 전략 2: 추방 결과 역이용 (R2+) ===
+  if (round >= 2 && _eliminationHistory.length && Math.random() < 0.35) {
+    for (const elim of _eliminationHistory) {
+      // 추방된 수호자를 이용: "나는 그 사람과 같은 진영이라고 조사됐으니 나도 수호자"
+      if (elim.faction === "수호자") {
+        if (!usedCards.has("sentinel_eye")) {
+          claimedCards.set("sentinel_eye", bot.p.id);
+          return `파수꾼의 눈으로 나와 ${elim.name}을 봤었는데 같은 진영이었다. ${elim.name}이 수호자였으니 나도 수호자라는 증거다.`;
+        }
+        if (!usedCards.has("prophecy_shard") && nonTeam.length >= 1) {
+          const target = pick(nonTeam);
+          claimedCards.set("prophecy_shard", bot.p.id);
+          return `예지의 파편으로 ${target.name}, ${elim.name}을 봤었는데 공허가 있었다. ${elim.name}은 수호자였으니 ${target.name}이 공허다!`;
+        }
+      }
+    }
+  }
+
+  // === 전략 3: 이전 거짓말과 일관된 추가 거짓말 ===
+  const prevClaims = getVoidPrevClaims(bot.p.id, round);
+  if (prevClaims.length && Math.random() < 0.3) {
+    // 이전에 "A, B에 공허가 있다"고 했으면 이번에 그 중 한 명을 더 의심
+    for (const pc of prevClaims) {
+      if (pc.msg.includes("공허가 있다")) {
+        const mentionedTargets = nonTeam.filter(p => pc.msg.includes(p.name));
+        if (mentionedTargets.length) {
+          const t = pick(mentionedTargets);
+          return `R${pc.round}에서 말했듯이 ${t.name} 쪽에 공허가 있었다. ${t.name}을 추방해야 한다.`;
+        }
+      }
+    }
+  }
+
+  // === 전략 4: 가짜 조사 결과 발표 (50%) ===
   const realCid = myChoice?.cid;
   const usedCombat = realCid && CARDS.find(c => c.id === realCid)?.cat === "combat";
 
@@ -399,33 +581,72 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
     }
   }
 
-  // 2. 수호자: 확정 공허가 발언에 있으면 반박
+  // 2. 크로스라운드 모순 지적 (R2+)
+  if (round >= 2 && bot.p.faction === "guardian") {
+    const contradictions = detectCrossRoundContradictions(bot, players, round);
+    if (contradictions.length) {
+      const c = contradictions[Math.floor(Math.random() * contradictions.length)];
+      return c.msg;
+    }
+  }
+
+  // 3. 수호자: 확정 공허가 발언에 있으면 반박
   if (bot.p.faction === "guardian") {
     const confirmedVoid = oth.filter(p => bot.kf[p.id] === "void");
-    // 누군가가 확정 공허를 감싸고 있으면 지적
     for (const cv of confirmedVoid) {
       if (convSoFar.includes(cv.name) && (convSoFar.includes("의심하지 마") || convSoFar.includes("믿") || convSoFar.includes("수호자"))) {
         const defender = prevStatements?.find(s => s.msg.includes(cv.name) && (s.msg.includes("의심하지 마") || s.msg.includes("수호자")));
         if (defender && defender.id !== bot.p.id) {
-          return `${pn(players, defender.id)}가 ${cv.name}을 감싸고 있는데, 내 조사 결과로는 ${cv.name}은 공허가 확실하다.`;
+          return `${pn(players, defender.id)}가 ${cv.name}을 감싸고 있는데, 내 조사 결과로는 ${cv.name}은 공허가 확실하다. ${pn(players, defender.id)}도 의심스럽다.`;
         }
       }
     }
 
-    // 의심 높은 사람에 대한 의견
+    // 이전 발언과 현재 발언 비교
+    if (round >= 2) {
+      for (let r = 1; r < round; r++) {
+        const disc = _roundDiscussions[r];
+        if (!disc) continue;
+        for (const d of disc) {
+          // 이전에 "수호자"라고 주장된 사람이 이번에 "공허"로 의심되면 흥미로운 반전
+          if (d.msg.includes("수호자") || d.msg.includes("공허가 없")) {
+            const mentioned = oth.find(p => d.msg.includes(p.name) && convSoFar.includes(p.name) && /공허|의심|수상/.test(convSoFar));
+            if (mentioned && d.id !== bot.p.id && Math.random() < 0.3) {
+              return `R${r}에서 ${pn(players, d.id)}가 ${mentioned.name}은 수호자라고 했는데, 지금 의심이 나오고 있다. 다시 검증해 봐야 한다.`;
+            }
+          }
+        }
+      }
+    }
+
     const topSusp = oth.filter(p => bot.gs(p.id) > 0.15).sort((a, b) => bot.gs(b.id) - bot.gs(a.id));
     if (topSusp.length && Math.random() < 0.5) {
       const s = topSusp[0];
-      // 다른 사람이 이 사람을 언급했으면 동조
       if (convSoFar.includes(s.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
         return `동의한다. ${s.name}에 대한 의심이 맞다고 본다.`;
       }
     }
   }
 
-  // 3. 공허: 수호자 간 분열 유도
+  // 4. 공허: 수호자 간 분열 유도 + 크로스라운드 전략
   if (bot.p.faction === "void") {
     const nonTeam = oth.filter(p => !bot.vt.includes(p.id));
+    const team = oth.filter(p => bot.vt.includes(p.id));
+
+    // 이전 거짓말 일관성 유지하며 공격
+    if (round >= 2) {
+      const prevClaims = getVoidPrevClaims(bot.p.id, round);
+      for (const pc of prevClaims) {
+        if (pc.msg.includes("공허가 있다")) {
+          const targets = nonTeam.filter(p => pc.msg.includes(p.name));
+          if (targets.length && Math.random() < 0.4) {
+            const t = pick(targets);
+            return `R${pc.round}에서도 말했지만 ${t.name}이 의심스럽다. 이번에 추방하자.`;
+          }
+        }
+      }
+    }
+
     // 누군가가 의심받고 있으면 가세
     for (const nt of nonTeam) {
       if (convSoFar.includes(nt.name) && (convSoFar.includes("의심") || convSoFar.includes("수상"))) {
@@ -433,16 +654,25 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
           return pick([
             `맞다. ${nt.name}이 수상하다. 이번에 추방하자.`,
             `${nt.name}에 대해 나도 비슷하게 느꼈다.`,
+            `${nt.name}이 정보를 안 주는 게 이상하지 않나?`,
           ]);
         }
       }
     }
     // 팀원이 의심받으면 다른 데로 돌리기
-    const team = oth.filter(p => bot.vt.includes(p.id));
     for (const tm of team) {
       if (convSoFar.includes(tm.name) && (convSoFar.includes("의심") || convSoFar.includes("공허"))) {
         const redirect = pick(nonTeam);
-        if (redirect) return `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나?`;
+        if (redirect) return `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나? 증거를 보자.`;
+      }
+    }
+
+    // 추방된 사람 활용
+    if (_eliminationHistory.length && Math.random() < 0.3) {
+      const elim = pick(_eliminationHistory);
+      if (elim.faction === "수호자") {
+        const target = pick(nonTeam);
+        if (target) return `${elim.name}은 수호자였는데 추방됐다. 진짜 공허는 ${target.name} 같은 사람 아닌가?`;
       }
     }
   }
@@ -508,17 +738,36 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
           if (bot.kf[mentioned.id] === "void") {
             msg = `맞다. ${mentioned.name}은 내 조사 결과로도 공허가 확실하다.`;
           } else if (bot.gs(mentioned.id) > 0.15) {
-            msg = `${mentioned.name}에 대해 나도 의심이 있다.`;
+            // 증거와 함께 동조
+            const ev = bot.secrets.find(s =>
+              (s.card === "prophecy_shard" && s.result === "void_present" && s.targets?.includes(mentioned.id)) ||
+              (s.card === "tracker_eye" && s.target === mentioned.id && ["abyssal_blade","fog_veil","disruption","abyssal_touch"].includes(s.result))
+            );
+            msg = ev
+              ? `${mentioned.name}에 대해 나도 의심이 있다. ${describeSecret(ev, players)}`
+              : `${mentioned.name}에 대해 나도 의심이 있다.`;
+          } else if (bot.kf[mentioned.id] === "guardian" && Math.random() < 0.5) {
+            msg = `${mentioned.name}은 내 조사 결과 수호자다. 다른 사람을 봐야 한다.`;
+          }
+          // 크로스라운드: 플레이어가 이전 라운드 발언을 언급하면 검증
+          if (!msg && round >= 2 && /R\d|라운드|이전/.test(playerMsg)) {
+            const contradictions = detectCrossRoundContradictions(bot, players, round);
+            if (contradictions.length) {
+              msg = contradictions[0].msg;
+            }
           }
         } else {
           // 공허: 팀원이면 엄호, 수호자면 공격
           if (bot.vt.includes(mentioned.id)) {
             msg = pick([
-              `${mentioned.name}은 의심할 이유가 없다.`,
+              `${mentioned.name}은 의심할 이유가 없다. 다른 쪽을 봐라.`,
               `${mentioned.name}을 의심하는 건 시간 낭비다.`,
             ]);
-          } else if (Math.random() < 0.4) {
-            msg = `${mentioned.name}에 대해 나도 비슷하게 생각한다.`;
+          } else if (Math.random() < 0.5) {
+            msg = pick([
+              `${mentioned.name}에 대해 나도 비슷하게 생각한다.`,
+              `맞다. ${mentioned.name}이 수상하다.`,
+            ]);
           }
         }
       }
