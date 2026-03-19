@@ -874,16 +874,22 @@ function localBotReact(bot, players, allChoices, round, convSoFar, claimedCards,
         }
       }
     }
-    // 팀원이 의심받으면 다른 데로 돌리기
+    // 팀원이 의심받으면 다른 데로 돌리기 (단, 카드 중복 상황이면 근거 없이 편들지 않음)
+    const hasCardConflict = convSoFar.includes("같은 카드") || convSoFar.includes("불가능") || convSoFar.includes("거짓말이다");
     for (const tm of team) {
       if (convSoFar.includes(tm.name) && (convSoFar.includes("의심") || convSoFar.includes("공허"))) {
-        const redirect = pick(nonTeam);
-        if (redirect) {
-          return pick([
-            `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나?`,
-            `${tm.name}을 의심하는 건 공허의 함정이다. ${redirect.name}을 봐라.`,
-            `잠깐, ${tm.name}은 유용한 정보를 줬다. 오히려 ${redirect.name}이 아무 정보도 안 줬다.`,
-          ]);
+        if (hasCardConflict && convSoFar.includes(tm.name)) {
+          // 카드 중복 상황 → 근거 없는 편들기 안 함, 대신 다른 사람 공격
+          const redirect = pick(nonTeam);
+          if (redirect) return `둘 다 주장하고 있으니 다른 증거로 판단해야 한다. 그보다 ${redirect.name}을 보자.`;
+        } else {
+          const redirect = pick(nonTeam);
+          if (redirect) {
+            return pick([
+              `${tm.name}보다 ${redirect.name} 쪽이 더 수상하지 않나?`,
+              `그보다 ${redirect.name}을 먼저 확인해 봐야 한다.`,
+            ]);
+          }
         }
       }
     }
@@ -1041,10 +1047,11 @@ function generateLocalReactions(players, bots, playerMsg, allChoices, round, con
             }
           }
         } else {
-          // 공허: 팀원이면 엄호, 수호자면 공격
-          if (bot.vt.includes(mentioned.id)) {
+          // 공허: 팀원이면 엄호, 수호자면 공격 (카드 중복 상황이면 편들지 않음)
+          const playerMsgHasConflict = /같은 카드|불가능|거짓말/.test(playerMsg);
+          if (bot.vt.includes(mentioned.id) && !playerMsgHasConflict) {
             msg = pick([
-              `${mentioned.name}은 의심할 이유가 없다. 다른 쪽을 봐라.`,
+              `${mentioned.name}보다 다른 쪽을 봐야 한다.`,
               `${mentioned.name}을 의심하는 건 시간 낭비다.`,
             ]);
           } else if (Math.random() < 0.5) {
